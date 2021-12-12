@@ -1,13 +1,23 @@
-Word(s),Spoken Form (If Different)
-nmap,N map
-under-documented,under documented
-nmap
-admin
-Cisco
-Citrix
-VPN
-DNS
-Minecraft
+Word(s),Spoken Form (If Different)
+
+nmap,N map
+
+under-documented,under documented
+
+nmap
+
+admin
+
+Cisco
+
+Citrix
+
+VPN
+
+DNS
+
+Minecraft
+
 git
 apps
 knausj,nouse jay
@@ -37,6 +47,8 @@ gaze
 .py,dot pie
 repl,reepul
 repl,repul
+repl,reppul
+repl,reppel
 RSI,ar ess eye
 com
 tmux
@@ -78,3 +90,16 @@ done,dun
 cruft
 add
 rect
+arg
+int
+bool
+def
+gui,gooey
+cron
+prog
+queue
+bresenham
+algo
+init
+docstring
+IDE
