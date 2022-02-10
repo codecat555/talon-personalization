@@ -103,3 +103,6 @@ algo
 init
 docstring
 IDE
+multipass
+deduplifier
+vimium
