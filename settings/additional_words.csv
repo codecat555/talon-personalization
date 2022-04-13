@@ -34,7 +34,6 @@ none
 docs
 win
 gaze
-.py,dot pie
 repl,reepul
 repl,repul
 repl,reppul
@@ -65,7 +64,6 @@ todo,todoo
 todo,ta do
 todo,to doo
 todo,two dot
-todo,2.
 todo,todew
 mod
 talon,talen
@@ -103,5 +101,37 @@ bok choy
 sake,saki
 sake,sakee
 cursorless
-cpu, seepeeyou
+cpu, cu
 gen
+nuage,newahge
+deduplifier
+sshfs
+addr,adder
+idx,idex
+postgres
+iptables
+upsert
+upserting
+conf
+etc,etsee
+enum
+Shelby
+boffo
+sql,esscuell
+sql,squeal
+sql,sequel
+ddl
+sqlalchemy,squealalchemy
+sqlalchemy,sequelalchemy
+align,aline
+dir
+are
+stdin,standard in
+stdout,standard out
+stderr,standard air
+usb
+args
+knoll
+jinja
+filesystem
+GPS
