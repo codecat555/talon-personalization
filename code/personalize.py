@@ -1,92 +1,45 @@
 
 import os
 
+from talon import Context, registry, app, Module, settings
 from .user_settings import get_lines_from_csv, SETTINGS_DIR
-
-from talon import Context, registry, app
 
 class PersonalValueError(ValueError):
     pass
 
+mod = Module()
+
+mod.tag('personalization', desc='enable personalizations')
+
+setting_enable_personalization = mod.setting(
+    "enable_personalization",
+    type=bool,
+    default=False,
+    desc="Whether to enable the personalizations defined by the CSV files in the settings folder.",
+)
+
 ctx = Context()
 ctx.matches = r"""
-tag: user.enable_personalizations
+tag: user.personalization
 """
-# ctx.matches = r"""
-# tag: user.enable_personalizations
-# tag: user.enable_personalizations1
-# """
 
 # b,x = [(x[0],registry.contexts[x[1]]) for x in enumerate(registry.contexts)][152]
 # y = [v for k,v in x.commands.items() if v.rule.rule == 'term <user.word>'][0]
 
-# default_alphabet = "air bat cam drum each fine gust harp ice jane kick look made near odd pit quench red sun trap urge vest whale plex yip zip".split(' ')
-# letters_string = "abcdefghijklmnopqrstuvwxyz"
-# alphabet = dict(zip(default_alphabet, letters_string))
-
-# supplemental_punctuation_words = {
-#     'pause': ',',
-#     'half pause': ';'
-# }
-
-# #
-# supplemental_symbol_key_words = {
-#     "lack": "[",
-#     "rack": "]",
-#     "close square": "]",
-#     "lip": "(",
-#     "rip": ")",
-#     "close paren": ")",
-#     "lace": "{",
-#     "race": "}",
-#     "close brace": "}",
-#     "lang": "<",
-#     "rang": ">",
-#     "bar": "t"
-# }
-
-# supplemental_alternate_keys = {
-#     "backspace": "backspace",
-#     "wipe": "backspace",
-#     "gobble": "delete",
-#     "tabby": "tab",
-#     "clap": "enter",
-#     # gap conflicts with cap...so, let's replace cap
-#     "gap": "space"
-# }
-
-# list_overrides = [
-#     {
-#         'target': 'user.letter',
-#         'delete': 'ALL',
-#         'add': alphabet
-#     },
-#     {
-#         'target': 'user.punctuation',
-#         'delete': [
-#             'exclamation mark',
-#         ],
-#         'add': supplemental_punctuation_words
-#     },
-#     {
-#         'target': 'user.symbol_key',
-#         'delete': [],
-#         'add': {
-#             **supplemental_punctuation_words,
-#             **supplemental_symbol_key_words
-#         }
-#     },
-#     {
-#         'target': 'user.special_key',
-#         'delete': [],
-#         'add': {
-#             **supplemental_alternate_keys,
-#         }
-#     },
-# ]
-
 testing = True
+
+def refresh_settings(*args):
+    load_personalization()
+
 def on_ready():
+    load_personalization()
+
+    # catch updates
+    settings.register("", refresh_settings)
+
+def load_personalization():
+    if not settings.get('user.enable_personalization'):
+        return
 
     personalize_file_name = "personalizations.csv"
 
