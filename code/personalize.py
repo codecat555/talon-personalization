@@ -1,4 +1,41 @@
 
+# this module provides a mechanism for overriding talon lists via a set of csv files located
+# in a sub-folder of the settings folder - 'settings/list_personalization'.
+# 
+# CONTROL FILE
+# ------------
+# there is a master csv file called 'control.csv' which indicates how the other files should
+# be used. It's format is:
+#
+#        action,talon list name,CSV file name
+#
+# The first field, action, may be ADD, DELETE, or REPLACE.
+#
+#     ADD - the CSV file entries should be added to the indicated list.
+#  DELETE - the CSV file entries should be deleted from the indicated list.
+# REPLACE - the indicated list should be completely replaced by the CSV file entries,
+#           or by nothing if no CSV file is given.
+#
+# Note: the CSV file name field is optional for the REPLACE action, in which case the
+# indicated list will simply be replaced with nothing.
+#
+#
+# CSV FILE FORMAT - GENERAL
+# -------------------------
+# Nothing fancy, just basic comma-separated values. Commas in the data can be escaped
+# using a backslash prefix.
+#
+#
+# CSV FILE FORMAT - FOR DELETE ACTION
+# -----------------------------------
+# One item per line, indicating which keys should be removed from the given list.
+#
+#
+# CSV FILE FORMAT - FOR ADD/REPLACE ACTIONS
+# -----------------------------------------
+# Two items per line, separated by a single comma. The first value is the key, and the
+# second the value.
+
 import os
 import threading
 
@@ -98,7 +135,7 @@ def load_personalization():
                         print(f'{personalize_control_file_name}, at line {line_number} - missing file for delete entry, skipping: {file_name}')
                         continue
 
-                # print(f'personalize_file_name - {deletions=}')
+                    # print(f'personalize_file_name - {deletions=}')
 
                     value = source.copy()
                     value = { k:v for k,v in source.items() if k not in deletions }
