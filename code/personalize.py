@@ -1,9 +1,8 @@
-# this module provides a mechanism for overriding talon lists via a set of csv files located
-# in a sub-folder of the settings folder - 'settings/list_personalization'.
+# This module provides a mechanism for overriding talon lists and commands via a set of csv files.
 # 
 # CONTROL FILE
 # ------------
-# there is a master csv file called 'control.csv' which indicates how the other files should
+# There is a master csv file called 'control.csv' which indicates how the other files should
 # be used. It's format is:
 #
 #        action,talon list name,CSV file name
@@ -39,10 +38,9 @@ import os
 import threading
 from pathlib import Path
 import re
+import pprint
 
 from talon import Context, registry, app, Module, settings, actions
-from talon.scripting.types import CommandImpl
-from talon.grammar import Grammar, Rule
 
 from .user_settings import get_lines_from_csv, get_lines_from_csv_untracked
 
@@ -97,67 +95,7 @@ class Personalizer():
         self.talon_header = self.py_header
 
         self.tag_expression = f'tag: user.personalization'
-        # self.and_tag_expression = ' and ' + self.tag_expression
 
-
-    # def add_tag_to_match_string(self, old_match_string: str) -> str:
-    #     new_match_string: str = ''
-        
-    #     if len(old_match_string) == 0:
-    #         new_match_string = self.tag_expression
-    #     else:
-    #         saw_and = False
-    #         current_claws = []
-    #         for line in old_match_string.split('\n'):
-    #             if not len(line):
-    #                 continue
-
-    #             # name, value = re.split('\s*:\*', line)
-    #             if len(current_claws) == 0:
-    #                 # always push the first line of a clause before considering 'and'
-    #                 current_claws.append(line)
-    #             else:
-    #                 if line.strip().startswith(' and'):
-    #                     saw_and = True
-
-    #                 if saw_and:
-    #                     # keep pushing lines until we detect the end of the clause
-    #                     current_claws.append(line)
-
-    #             saw_and = line.strip().endswith(' and')
-                    
-    #             if not saw_and:
-    #                 # found end of claws, add the tag
-    #                 current_claws.append(self.and_tag_expression)
-
-    #                 # add the new clause
-    #                 new_match_string += ''.join(current_claws)
-                    
-    #                 # start a new clause
-    #                 current_claws = []
-    #                 saw_and = False
-
-    #             # expression = ''
-    #             # while saw_and:
-    #             #     expression += line
-    #             #     # check special cases
-    #             #     for left, right in (l.strip(), r.strip() for l,r in line.split(':')):
-    #             #         print(f'{left=}, {right=}')
-                        
-                
-    #     print(f'{old_match_string=}, {new_match_string=}')
-        
-    #     return new_match_string
-        
-    def add_tag_to_match_string(self, context_path: str, old_match_string: str, tag: str = None) -> str:
-        if tag is None:
-            tag = self.tag_expression
-
-        new_match_string: str = old_match_string + tag
-
-        print(f'{old_match_string=}, {new_match_string=}')
-        return new_match_string
-        
     def load_personalization(self):
         if not settings.get('user.enable_personalization'):
             return
@@ -172,6 +110,15 @@ class Personalizer():
             self.load_list_personalizations()
             self.load_command_personalizations()
             self.generate_files()
+        
+    def add_tag_to_match_string(self, context_path: str, old_match_string: str, tag: str = None) -> str:
+        if tag is None:
+            tag = self.tag_expression
+
+        new_match_string: str = old_match_string + tag
+
+        print(f'{old_match_string=}, {new_match_string=}')
+        return new_match_string
 
     def get_fs_path_prefix(self, context_path) -> Path:
         wip = context_path.split('.')
@@ -188,18 +135,18 @@ class Personalizer():
         return wip, filename
 
     def write_py_header(self, f, context_path):
-        print(f'{self.py_header}{context_path}', file=f, end='')
+        print(f'{self.py_header}{context_path}', file=f)
 
     def write_py_context(self, f, context_path, match_string):
         print('from talon import Context', file=f)
         print('ctx = Context()', file=f)
-        print(f'ctx.matches = """{match_string}"""', file=f)
+        print(f'ctx.matches = """{match_string}"""\n', file=f)
 
     def write_talon_header(self, f, context_path):
         print(f'{self.talon_header}{context_path}', file=f)
 
     def write_talon_context(self, f, context_path, match_string):
-        print(f'{match_string}-', file=f)
+        print(f'{match_string}\n-', file=f)
         
     def write_talon_tag_calls(self, f, context_path):
         for line in self.get_tag_calls(context_path):
@@ -254,10 +201,10 @@ class Personalizer():
                 print(f'personalize.py - generate_files(): writing customizations to "{filepath}"...')
                 with open(filepath, open_mode) as f:
                     self.write_py_header(f, ctx_path)
-                    # self.write_py_context(f, ctx_path, self.add_tag_to_match_string(context))
                     self.write_py_context(f, ctx_path, new_match_string)
+                    pp = pprint.PrettyPrinter(indent=4)
                     for list_name, list_value in list_personalizations.items():
-                        print(f'ctx.lists["{list_name}"] = {list_value}', file=f)
+                        print(f'ctx.lists["{list_name}"] = {pp.pformat(list_value)}\n', file=f)
 
     def get_source_match_string(self, context_path):
         source_match_string = None
@@ -283,7 +230,7 @@ class Personalizer():
     def _get_matches_and_tags(self, context_path, context_personalizations):
         source_match_string, tag_calls = None, None
         if context_path.endswith('.talon'):
-                # need to grab match string from the file
+            # need to grab match string from the file
             source_match_string, tag_calls = self._parse_talon_file(context_path)
         else:
             context = self.get_source_context(context_path)
@@ -315,7 +262,7 @@ class Personalizer():
                     else:
                         source_match_string += line
             else:
-                    # never found a '-' => no context header for this file
+                # never found a '-' => no context header for this file
                 source_match_string = ''
         
         return source_match_string, tag_calls
@@ -405,9 +352,6 @@ class Personalizer():
                     
                 # print(f'personalize_file_name - after {action.upper()}, {value=}')
 
-                # do it to it
-                # self.add_personalizations(target, value)
-
                 list_personalizations = self.get_list_personalizations(target_ctx_path)
                 list_personalizations.update({target_list: value})
 
@@ -432,8 +376,6 @@ class Personalizer():
         if not 'source_context' in context_personalizations:
             context_personalizations['source_context'] = registry.contexts[context_path]
 
-        # print(f'get_personalizations: context matches: \'{self.personalizations[context_path]["source_context"].matches}\'')
-        
         return context_personalizations['source_context']
         
     def get_list_personalizations(self, context_path: str):
@@ -453,15 +395,6 @@ class Personalizer():
         return context_personalizations['commands']
 
     def load_command_personalizations(self):
-        #
-        # 1. fetch or create target context
-        #   1. fetch target context, if it exists
-        #   2. create target context
-        #        1. fetch source context
-        #        2. parse source context matches into segments
-        #        3. add personalization tag to each segment
-        # 
-
         print(f'load_command_personalizations(): loading customizations from "{self.personal_command_control_file_name}"...')
         
         self.command_personalizations = {}
@@ -470,7 +403,6 @@ class Personalizer():
 
         try:
             line_number = 0
-            # for action, target, file_name in get_lines_from_csv(self.personal_command_control_file_name):
             for action, target_ctx_path, file_name in get_lines_from_csv_untracked(self.personal_command_control_file_name):
                 line_number += 1
 
@@ -486,17 +418,13 @@ class Personalizer():
 
                 file_path = os.path.join(self.command_personalization_folder, file_name)
 
-    # WIP - not sure about this bit
+                # WIP - not sure about this bit
                 # if target in ctx.lists.keys():
                 #     source = ctx.lists[target]
                 # else:
                 #     source = registry.lists[target][0]
                 context = registry.contexts[target_ctx_path]
 
-                # tagged_context = self.add_tag_to_match_string(context)
-                # print(f'load_command_personalizations: {tagged_context=}')
-
-                # commands = {x.rule: x for x in context.commands.values()}
                 commands = context.commands
                         
                 value = {}
@@ -545,15 +473,8 @@ class Personalizer():
                     
                 # print(f'personalize_file_name - after {action.upper()}, {value=}')
 
-                # # do it to it
-                # registry.contexts[target] = value
-
                 command_personalizations = self.get_command_personalizations(target_ctx_path)
                 command_personalizations.update(value)
-                # self.get_source_context(context_path)
-                # self.get_source_match_string(target_ctx_path)
-
-                # break
 
         except FileNotFoundError as e:
             # below check is necessary because the inner try blocks above do not catch this
@@ -585,9 +506,3 @@ def refresh_settings(setting_path, new_value):
 p = Personalizer()
 
 app.register("ready", on_ready)
-
-# @mod.action_class
-# class Actions:
-#     def make_it_so(s: str):
-#         """Do it to it."""
-#         pass
