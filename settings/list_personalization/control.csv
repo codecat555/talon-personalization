@@ -1,6 +1,6 @@
-DELETE,user.punctuation,punctuation_deletions.csv
-ADD,user.punctuation,punctuation_additions.csv
-REPLACE,user.letter,alphabet.csv
-ADD,user.symbol_key,punctuation_additions.csv
-ADD,user.symbol_key,symbol_key_additions.csv
-ADD,user.special_key,special_key_additions.csv
+DELETE,user.knausj_talon.code.keys,user.punctuation,punctuation_deletions.csv
+ADD,user.knausj_talon.code.keys,user.punctuation,punctuation_additions.csv
+REPLACE,user.knausj_talon.code.keys,user.letter,alphabet.csv
+ADD,user.knausj_talon.code.keys,user.symbol_key,punctuation_additions.csv
+ADD,user.knausj_talon.code.keys,user.symbol_key,symbol_key_additions.csv
+ADD,user.knausj_talon.code.keys,user.special_key,special_key_additions.csv

@@ -1,4 +1,3 @@
-
 # this module provides a mechanism for overriding talon lists via a set of csv files located
 # in a sub-folder of the settings folder - 'settings/list_personalization'.
 # 
@@ -38,9 +37,15 @@
 
 import os
 import threading
+from pathlib import Path
+import re
 
-from talon import Context, registry, app, Module, settings
-from .user_settings import get_lines_from_csv
+from talon import Context, registry, app, Module, settings, actions
+from talon.scripting.types import CommandImpl
+from talon.grammar import Grammar, Rule
+
+from .user_settings import get_lines_from_csv, get_lines_from_csv_untracked
+
 class PersonalValueError(ValueError):
     pass
 
@@ -53,7 +58,7 @@ setting_enable_personalization = mod.setting(
     desc="Whether to enable the personalizations defined by the CSV files in the settings folder.",
 )
 
-mod.tag('personalization', desc='enable personalizations')
+personalization_tag = mod.tag('personalization', desc='enable personalizations')
 
 mod.list("test_list_replacement", desc="a list for testing the personalization replacement feature")
 
@@ -67,60 +72,297 @@ ctx.lists["user.test_list_replacement"] = {'one': 'blue', 'two': 'red', 'three':
 # b,x = [(x[0],registry.contexts[x[1]]) for x in enumerate(registry.contexts)][152]
 # y = [v for k,v in x.commands.items() if v.rule.rule == 'term user.word>'][0]
 
-personalization_mutex: threading.RLock = threading.RLock()
+class Personalizer():
+    def __init__(self):
+        self.personalization_mutex: threading.RLock = threading.RLock()
+        self.command_add_disallowed_title = "Talon - ADD not allowed for commands"
+        self.command_add_disallowed_notice = 'Command personalization: to add new commands, use a .talon file.'
 
-list_personalization_folder = 'list_personalization'
-personalize_control_file_name = os.path.join(list_personalization_folder, 'control.csv')
-testing = True
+        self.personalizations = {}
 
-def refresh_settings(setting_path, new_value):
-    # print(f'refresh_settings() - {setting_path=}, {new_value=}')
-    if setting_path == setting_enable_personalization.path:
-        load_personalization()
+        self.control_file_name = 'control.csv'
 
-def on_ready():
-    load_personalization()
+        self.personal_root_folder_name = '_personalizations'
+        self.personal_root_path = actions.path.talon_user() / self.personal_root_folder_name
 
-    # catch updates
-    settings.register("", refresh_settings)
+        self.list_personalization_folder = 'list_personalization'
+        self.command_personalization_folder = 'command_personalization'
 
-def load_personalization():
-    if not settings.get('user.enable_personalization'):
-        return
+        self.personal_list_control_file_name = os.path.join(self.list_personalization_folder, self.control_file_name)
+        self.personal_command_control_file_name = os.path.join(self.command_personalization_folder, self.control_file_name)
 
-    # this code has multiple event triggers which may overlap. it's not clear how talon
-    # handles that case, so use a mutex here to make sure only one copy runs at a time.
-    #
-    # note: this mutex may not actually be needed, I put it in because I was multiple simultaneous
-    # invocations of this code, which seem to be due to https://github.com/talonvoice/talon/issues/451.
-    with personalization_mutex:
-        print(f'personalize.py - on_ready(): loading customizations from "{personalize_control_file_name}"...')
+        self.testing = True
+
+        self.py_header = '# This file has been dynamically generated in order to override some of the definitions from context '
+        self.talon_header = self.py_header
+
+        self.tag_expression = f'tag: user.personalization'
+        # self.and_tag_expression = ' and ' + self.tag_expression
+
+
+    # def add_tag_to_match_string(self, old_match_string: str) -> str:
+    #     new_match_string: str = ''
         
+    #     if len(old_match_string) == 0:
+    #         new_match_string = self.tag_expression
+    #     else:
+    #         saw_and = False
+    #         current_claws = []
+    #         for line in old_match_string.split('\n'):
+    #             if not len(line):
+    #                 continue
+
+    #             # name, value = re.split('\s*:\*', line)
+    #             if len(current_claws) == 0:
+    #                 # always push the first line of a clause before considering 'and'
+    #                 current_claws.append(line)
+    #             else:
+    #                 if line.strip().startswith(' and'):
+    #                     saw_and = True
+
+    #                 if saw_and:
+    #                     # keep pushing lines until we detect the end of the clause
+    #                     current_claws.append(line)
+
+    #             saw_and = line.strip().endswith(' and')
+                    
+    #             if not saw_and:
+    #                 # found end of claws, add the tag
+    #                 current_claws.append(self.and_tag_expression)
+
+    #                 # add the new clause
+    #                 new_match_string += ''.join(current_claws)
+                    
+    #                 # start a new clause
+    #                 current_claws = []
+    #                 saw_and = False
+
+    #             # expression = ''
+    #             # while saw_and:
+    #             #     expression += line
+    #             #     # check special cases
+    #             #     for left, right in (l.strip(), r.strip() for l,r in line.split(':')):
+    #             #         print(f'{left=}, {right=}')
+                        
+                
+    #     print(f'{old_match_string=}, {new_match_string=}')
+        
+    #     return new_match_string
+        
+    def add_tag_to_match_string(self, context_path: str, old_match_string: str, tag: str = None) -> str:
+        if tag is None:
+            tag = self.tag_expression
+
+        new_match_string: str = old_match_string + tag
+
+        print(f'{old_match_string=}, {new_match_string=}')
+        return new_match_string
+        
+    def load_personalization(self):
+        if not settings.get('user.enable_personalization'):
+            return
+
+        # this code has multiple event triggers which may overlap. it's not clear how talon
+        # handles that case, so use a mutex here to make sure only one copy runs at a time.
+        #
+        # note: this mutex may not actually be needed, I put it in because I was seeing multiple simultaneous
+        # invocations of this code back when I was still using the stock CSV reader code...seems to have been
+        # due to https://github.com/talonvoice/talon/issues/451.
+        with self.personalization_mutex:
+            self.load_list_personalizations()
+            self.load_command_personalizations()
+            self.generate_files()
+
+    def get_fs_path_prefix(self, context_path) -> Path:
+        wip = context_path.split('.')
+
+        filename_idx = -1
+        if context_path.endswith('.talon'):
+            filename_idx = -2
+
+        filename = '.'.join(wip[filename_idx:])
+            
+        # leave off the last component, since this is a 'prefix' path
+        wip = f'{os.path.sep}'.join(wip[1:filename_idx])
+        # print(f'get_fs_path_prefix: got {context_path}, returning {wip, filename}')
+        return wip, filename
+
+    def write_py_header(self, f, context_path):
+        print(f'{self.py_header}{context_path}', file=f, end='')
+
+    def write_py_context(self, f, context_path, match_string):
+        print('from talon import Context', file=f)
+        print('ctx = Context()', file=f)
+        print(f'ctx.matches = """{match_string}"""', file=f)
+
+    def write_talon_header(self, f, context_path):
+        print(f'{self.talon_header}{context_path}', file=f)
+
+    def write_talon_context(self, f, context_path, match_string):
+        print(f'{match_string}-', file=f)
+        
+    def write_talon_tag_calls(self, f, context_path):
+        for line in self.get_tag_calls(context_path):
+            print(line, file=f, end='')
+        print(file=f)
+
+    def generate_files(self):
+        print(f'personalize.py - generate_files(): writing customizations to "{self.personal_root_path}"...')
+        current_files = []
+        for ctx_path in self.personalizations:
+            # print(f'generate_files: {ctx_path=}')
+
+            filepath_prefix = self.get_personal_filepath_prefix(ctx_path)
+            print(f'generate_files: {filepath_prefix=}')
+            
+            source_match_string = self.get_source_match_string(ctx_path)
+            print(f'get_context_match_string: {ctx_path=}')
+            print(f'get_context_match_string: {source_match_string=}')
+            new_match_string = self.add_tag_to_match_string(ctx_path, source_match_string)
+            print(f'get_context_match_string: {new_match_string=}')
+
+            if not filepath_prefix in current_files:
+                # truncate on open, if exists
+                open_mode = 'w'
+            else:
+                # append, if exists
+                open_mode = 'a'
+            current_files.append(filepath_prefix)
+
+            print(f'generate_files: {ctx_path=}, {new_match_string=}')
+
+            if ctx_path.endswith('.talon'):
+                command_personalizations = self.get_command_personalizations(ctx_path)
+                filepath = str(filepath_prefix)
+                with open(filepath, open_mode) as f:
+                    self.write_talon_header(f, ctx_path)
+                    
+                    self.write_talon_context(f, ctx_path, new_match_string)
+                    
+                    self.write_talon_tag_calls(f, ctx_path)
+                    
+                    print(f'command_personalizations: {command_personalizations=}')
+                    for personal_command, personal_impl in command_personalizations.items():
+                        # print(f"NOW - {personal_command}: {personal_impl}\n")
+                        print(f'{personal_command}:', file=f)
+                        for line in personal_impl.split('\n'):
+                            print(f'\t{line}', file=f)
+
+            else:
+                list_personalizations = self.get_list_personalizations(ctx_path)
+                filepath = str(filepath_prefix) + '.py'
+                print(f'personalize.py - generate_files(): writing customizations to "{filepath}"...')
+                with open(filepath, open_mode) as f:
+                    self.write_py_header(f, ctx_path)
+                    # self.write_py_context(f, ctx_path, self.add_tag_to_match_string(context))
+                    self.write_py_context(f, ctx_path, new_match_string)
+                    for list_name, list_value in list_personalizations.items():
+                        print(f'ctx.lists["{list_name}"] = {list_value}', file=f)
+
+    def get_source_match_string(self, context_path):
+        source_match_string = None
+
+        context_personalizations = self.get_personalizations(context_path)
+        if 'source_context_match_string' in context_personalizations:
+            source_match_string = context_personalizations['source_context_match_string']
+        else:
+            source_match_string, _ = self._get_matches_and_tags(context_path, context_personalizations)
+            
+        return source_match_string
+    
+    def get_tag_calls(self, context_path):
+        tag_calls = None
+        context_personalizations = self.get_personalizations(context_path)
+        if 'tag_calls' in context_personalizations:
+            tag_calls = context_personalizations['tag_calls']
+        else:
+            _, tag_calls = self._get_matches_and_tags(context_path, context_personalizations)
+            
+        return tag_calls
+
+    def _get_matches_and_tags(self, context_path, context_personalizations):
+        source_match_string, tag_calls = None, None
+        if context_path.endswith('.talon'):
+                # need to grab match string from the file
+            source_match_string, tag_calls = self._parse_talon_file(context_path)
+        else:
+            context = self.get_source_context(context_path)
+            source_match_string = context.matches
+                
+        context_personalizations['source_context_match_string'] = source_match_string
+        context_personalizations['tag_calls'] = tag_calls
+        
+        return source_match_string, tag_calls
+
+    def _parse_talon_file(self, context_path):
+        path_prefix, filename = self.get_fs_path_prefix(context_path)
+        filepath_prefix = os.path.join(actions.path.talon_user(), path_prefix, filename)
+        
+        source_match_string = ''
+        tag_calls = []
+        with open(filepath_prefix, 'r') as f:
+            seen_dash = False
+            for line in f:
+                if seen_dash:
+                    if line.strip().startswith('tag():'):
+                        # filter out personalization tag here, or error...?
+                        tag_calls.append(line)
+                else:
+                    if line.startswith('-'):
+                        seen_dash = True
+                    if line.lstrip().startswith('#'):
+                        continue
+                    else:
+                        source_match_string += line
+            else:
+                    # never found a '-' => no context header for this file
+                source_match_string = ''
+        
+        return source_match_string, tag_calls
+
+    def get_personal_filepath_prefix(self, ctx_path):
+        path_prefix, filename = self.get_fs_path_prefix(ctx_path)
+        path = self.personal_root_path / path_prefix
+        if not os.path.exists(path):
+            os.makedirs(path, mode=550, exist_ok=True)
+            
+        filepath_prefix = path / filename
+        return filepath_prefix
+
+    def load_list_personalizations(self):
+        print(f'load_list_personalizations.py - on_ready(): loading customizations from "{self.personal_list_control_file_name}"...')
+        new_context = None
+        
+        self.list_personalizations = {}
         try:
             line_number = 0
-            for action, target, *remainder in get_lines_from_csv(personalize_control_file_name):
+            for action, target_ctx_path, target_list, *remainder in get_lines_from_csv(self.personal_list_control_file_name):
                 line_number += 1
 
-                if testing:
-                    print(f'{personalize_control_file_name}, at line {line_number} - {target, action, remainder}')
+                if self.testing:
+                    print(f'{self.personal_list_control_file_name}, at line {line_number} - {action, target_ctx_path, target_list, remainder}')
                     # print(f'{personalize_file_name}, at line {line_number} - {target in ctx.lists=}')
                     pass
 
-                if not target in registry.lists:
-                    print(f'{personalize_control_file_name}, at line {line_number} - cannot redefine a list that does not exist, skipping: {target}')
+                if not target_ctx_path in registry.contexts:
+                    print(f'{self.personal_list_control_file_name}, at line {line_number} - cannot redefine a context that does not exist, skipping: {target_ctx_path}')
+                    continue
+                
+                if not target_list in registry.lists:
+                    print(f'{self.personal_list_control_file_name}, at line {line_number} - cannot redefine a list that does not exist, skipping: {target_list}')
                     continue
 
                 file_name = None
                 if len(remainder):
-                    file_name = os.path.join(list_personalization_folder, remainder[0])
+                    file_name = os.path.join(self.list_personalization_folder, remainder[0])
                 elif action.upper() != 'REPLACE':
-                    print(f'{personalize_control_file_name}, at line {line_number} - missing file name for add or delete entry, skipping: {target}')
+                    print(f'{self.personal_list_control_file_name}, at line {line_number} - missing file name for add or delete entry, skipping: {target_list}')
                     continue
 
-                if target in ctx.lists.keys():
-                    source = ctx.lists[target]
+                if target_list in ctx.lists.keys():
+                    source = ctx.lists[target_list]
                 else:
-                    source = registry.lists[target][0]
+                    source = registry.lists[target_list][0]
                         
                 value = {}
                 if action.upper() == 'DELETE':
@@ -128,11 +370,11 @@ def load_personalization():
                     try:
                         for row in get_lines_from_csv(file_name):
                             if len(row) > 1:
-                                print(f'{personalize_control_file_name}, at line {line_number} - files containing deletions must have just one value per line, skipping entire file: {file_name}')
+                                print(f'{self.personal_list_control_file_name}, at line {line_number} - files containing deletions must have just one value per line, skipping entire file: {file_name}')
                                 raise PersonalValueError()
                             deletions.append(row[0])
                     except FileNotFoundError:
-                        print(f'{personalize_control_file_name}, at line {line_number} - missing file for delete entry, skipping: {file_name}')
+                        print(f'{self.personal_list_control_file_name}, at line {line_number} - missing file for delete entry, skipping: {file_name}')
                         continue
 
                     # print(f'personalize_file_name - {deletions=}')
@@ -146,11 +388,11 @@ def load_personalization():
                         try:
                             for row in get_lines_from_csv(file_name):
                                 if len(row) != 2:
-                                    print(f'{personalize_control_file_name}, at line {line_number} - files containing additions must have just two values per line, skipping entire file: {file_name}')
+                                    print(f'{self.personal_list_control_file_name}, at line {line_number} - files containing additions must have just two values per line, skipping entire file: {file_name}')
                                     raise PersonalValueError()
                                 additions[ row[0] ] = row[1]
                         except FileNotFoundError:
-                            print(f'{personalize_control_file_name}, at line {line_number} - missing file for add or replace entry, skipping: {file_name}')
+                            print(f'{self.personal_list_control_file_name}, at line {line_number} - missing file for add or replace entry, skipping: {file_name}')
                             continue
                     
                     if action.upper() == 'ADD':
@@ -158,21 +400,194 @@ def load_personalization():
                         
                     value.update(additions)
                 else:
-                    print(f'{personalize_control_file_name}, at line {line_number} - unknown action, skipping: {action}')
+                    print(f'{self.personal_list_control_file_name}, at line {line_number} - unknown action, skipping: {action}')
                     continue
                     
                 # print(f'personalize_file_name - after {action.upper()}, {value=}')
 
                 # do it to it
-                ctx.lists[target] = value
+                # self.add_personalizations(target, value)
+
+                list_personalizations = self.get_list_personalizations(target_ctx_path)
+                list_personalizations.update({target_list: value})
 
         except FileNotFoundError as e:
             # below check is necessary because the inner try blocks above do not catch this
             # error completely...something's odd about the way talon is handling these exceptions.
-            if os.path.basename(e.filename) == personalize_control_file_name:
-                print(f'Setting  "{setting_enable_personalization.path}" is enabled, but personalization control file does not exist: {personalize_control_file_name}')
+            if os.path.basename(e.filename) == self.personal_list_control_file_name:
+                print(f'Setting  "{setting_enable_personalization.path}" is enabled, but personalization control file does not exist: {self.personal_list_control_file_name}')
         except PersonalValueError:
             # nothing to do
             pass
 
+    def get_personalizations(self, context_path: str):
+        if not context_path in self.personalizations:
+            self.personalizations[context_path] = {}
+
+        return self.personalizations[context_path]
+
+    def get_source_context(self, context_path: str):
+        context_personalizations = self.get_personalizations(context_path)
+
+        if not 'source_context' in context_personalizations:
+            context_personalizations['source_context'] = registry.contexts[context_path]
+
+        # print(f'get_personalizations: context matches: \'{self.personalizations[context_path]["source_context"].matches}\'')
+        
+        return context_personalizations['source_context']
+        
+    def get_list_personalizations(self, context_path: str):
+        context_personalizations = self.get_personalizations(context_path)
+
+        if not 'lists' in context_personalizations:
+            context_personalizations['lists'] = {}
+            
+        return context_personalizations['lists']
+
+    def get_command_personalizations(self, context_path: str):
+        context_personalizations = self.get_personalizations(context_path)
+
+        if not 'commands' in context_personalizations:
+            context_personalizations['commands'] = {}
+            
+        return context_personalizations['commands']
+
+    def load_command_personalizations(self):
+        #
+        # 1. fetch or create target context
+        #   1. fetch target context, if it exists
+        #   2. create target context
+        #        1. fetch source context
+        #        2. parse source context matches into segments
+        #        3. add personalization tag to each segment
+        # 
+
+        print(f'load_command_personalizations(): loading customizations from "{self.personal_command_control_file_name}"...')
+        
+        self.command_personalizations = {}
+
+        send_add_notification = False
+
+        try:
+            line_number = 0
+            # for action, target, file_name in get_lines_from_csv(self.personal_command_control_file_name):
+            for action, target_ctx_path, file_name in get_lines_from_csv_untracked(self.personal_command_control_file_name):
+                line_number += 1
+
+                if self.testing:
+                    # print(f'{self.personal_command_control_file_name}, at line {line_number} - {target, action, remainder}')
+                    print(f'{self.personal_command_control_file_name}, at line {line_number} - {target_ctx_path, action, file_name}')
+                    # print(f'{personalize_file_name}, at line {line_number} - {target in ctx.lists=}')
+                    pass
+
+                if not target_ctx_path in registry.contexts:
+                    print(f'{self.personal_command_control_file_name}, at line {line_number} - cannot personalize commands in a context that does not exist, skipping: {target_ctx_path}')
+                    continue
+
+                file_path = os.path.join(self.command_personalization_folder, file_name)
+
+    # WIP - not sure about this bit
+                # if target in ctx.lists.keys():
+                #     source = ctx.lists[target]
+                # else:
+                #     source = registry.lists[target][0]
+                context = registry.contexts[target_ctx_path]
+
+                # tagged_context = self.add_tag_to_match_string(context)
+                # print(f'load_command_personalizations: {tagged_context=}')
+
+                # commands = {x.rule: x for x in context.commands.values()}
+                commands = context.commands
+                        
+                value = {}
+                if action.upper() == 'DELETE':
+                    deletions = []
+                    try:
+                        for row in get_lines_from_csv(file_path):
+                            if len(row) > 1:
+                                print(f'{self.personal_command_control_file_name}, at line {line_number} - files containing deletions must have just one value per line, skipping entire file: {file_path}')
+                                raise PersonalValueError()
+                            deletions.append(row[0])
+                    except FileNotFoundError:
+                        print(f'{self.personal_command_control_file_name}, at line {line_number} - missing file for delete entry, skipping: {file_path}')
+                        continue
+
+                    # print(f'personalize_file_name - {deletions=}')
+                    value = { k: 'skip()' for k in commands.keys() if k in deletions }
+                    
+                elif action.upper() == 'REPLACE':
+                    additions = {}
+                    try:
+                        for row in get_lines_from_csv(file_path):
+                            if len(row) != 2:
+                                print(f'{self.personal_command_control_file_name}, at line {line_number} - files containing replacements must have just two values per line, skipping entire file: {file_path}')
+                                raise PersonalValueError()
+                            
+                            target_command = row[0]
+                            replacement_command = row[1]
+
+                            impl = commands[f'{target_command}'].target.code
+                            
+                            print(f'HERE - {replacement_command}: {impl}')
+                            additions[ target_command ] = 'skip()'
+                            additions[ replacement_command ] = impl
+                    except FileNotFoundError:
+                        print(f'{self.personal_command_control_file_name}, at line {line_number} - missing file for add or replace entry, skipping: {file_path}')
+                        continue
+                        
+                    value.update(additions)
+                else:
+                    if action.upper() == 'ADD':
+                        send_add_notification = True
+                        
+                    print(f'{self.personal_command_control_file_name}, at line {line_number} - unknown action, skipping: {action}')
+                    continue
+                    
+                # print(f'personalize_file_name - after {action.upper()}, {value=}')
+
+                # # do it to it
+                # registry.contexts[target] = value
+
+                command_personalizations = self.get_command_personalizations(target_ctx_path)
+                command_personalizations.update(value)
+                # self.get_source_context(context_path)
+                # self.get_source_match_string(target_ctx_path)
+
+                # break
+
+        except FileNotFoundError as e:
+            # below check is necessary because the inner try blocks above do not catch this
+            # error completely...something's odd about the way talon is handling these exceptions.
+            print(f'personalize_file_name - {e.filename}')
+            if os.path.basename(e.filename) == personal_command_control_file_name:
+                print(f'Setting  "{setting_enable_personalization.path}" is enabled, but personalization control file does not exist: {personal_command_control_file_name}')
+        except PersonalValueError:
+            # nothing to do
+            pass
+
+        if send_add_notification:
+            app.notify(
+                title=self.command_add_disallowed_title,
+                body=self.command_add_disallowed_notice
+            )
+
+def on_ready():
+    p.load_personalization()
+
+    # catch updates
+    settings.register("", refresh_settings)
+    
+def refresh_settings(setting_path, new_value):
+        # print(f'refresh_settings() - {setting_path=}, {new_value=}')
+        if setting_path == setting_enable_personalization.path:
+            p.load_personalization()
+
+p = Personalizer()
+
 app.register("ready", on_ready)
+
+# @mod.action_class
+# class Actions:
+#     def make_it_so(s: str):
+#         """Do it to it."""
+#         pass
