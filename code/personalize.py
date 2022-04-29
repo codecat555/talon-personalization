@@ -37,12 +37,13 @@
 import os
 import threading
 from pathlib import Path
-import re
+import csv
 import pprint
 
 from talon import Context, registry, app, Module, settings, actions
 
-from .user_settings import get_lines_from_csv, get_lines_from_csv_untracked
+# from .user_settings import get_lines_from_csv_untracked, get_lines_from_csv_untracked
+from .user_settings import SETTINGS_DIR
 
 class PersonalValueError(ValueError):
     pass
@@ -110,7 +111,195 @@ class Personalizer():
             self.load_list_personalizations()
             self.load_command_personalizations()
             self.generate_files()
+   
+    def load_list_personalizations(self):
+        print(f'load_list_personalizations.py - on_ready(): loading customizations from "{self.personal_list_control_file_name}"...')
+        new_context = None
         
+        self.list_personalizations = {}
+        try:
+            line_number = 0
+            for action, target_ctx_path, target_list, *remainder in self.get_lines_from_csv_untracked(self.personal_list_control_file_name):
+                line_number += 1
+
+                if self.testing:
+                    print(f'{self.personal_list_control_file_name}, at line {line_number} - {action, target_ctx_path, target_list, remainder}')
+                    # print(f'{personalize_file_name}, at line {line_number} - {target in ctx.lists=}')
+                    pass
+
+                if not target_ctx_path in registry.contexts:
+                    print(f'{self.personal_list_control_file_name}, at line {line_number} - cannot redefine a context that does not exist, skipping: {target_ctx_path}')
+                    continue
+                
+                if not target_list in registry.lists:
+                    print(f'{self.personal_list_control_file_name}, at line {line_number} - cannot redefine a list that does not exist, skipping: {target_list}')
+                    continue
+
+                file_name = None
+                if len(remainder):
+                    file_name = os.path.join(self.list_personalization_folder, remainder[0])
+                elif action.upper() != 'REPLACE':
+                    print(f'{self.personal_list_control_file_name}, at line {line_number} - missing file name for add or delete entry, skipping: {target_list}')
+                    continue
+
+                if target_list in ctx.lists.keys():
+                    source = ctx.lists[target_list]
+                else:
+                    source = registry.lists[target_list][0]
+                        
+                value = {}
+                if action.upper() == 'DELETE':
+                    deletions = []
+                    try:
+                        for row in self.get_lines_from_csv_untracked(file_name):
+                            if len(row) > 1:
+                                print(f'{self.personal_list_control_file_name}, at line {line_number} - files containing deletions must have just one value per line, skipping entire file: {file_name}')
+                                raise PersonalValueError()
+                            deletions.append(row[0])
+                    except FileNotFoundError:
+                        print(f'{self.personal_list_control_file_name}, at line {line_number} - missing file for delete entry, skipping: {file_name}')
+                        continue
+
+                    # print(f'personalize_file_name - {deletions=}')
+
+                    value = source.copy()
+                    value = { k:v for k,v in source.items() if k not in deletions }
+
+                elif action.upper() == 'ADD' or action.upper() == 'REPLACE':
+                    additions = {}
+                    if file_name:  # some REPLACE entries may not have filenames, and that's okay
+                        try:
+                            for row in self.get_lines_from_csv_untracked(file_name):
+                                if len(row) != 2:
+                                    print(f'{self.personal_list_control_file_name}, at line {line_number} - files containing additions must have just two values per line, skipping entire file: {file_name}')
+                                    raise PersonalValueError()
+                                additions[ row[0] ] = row[1]
+                        except FileNotFoundError:
+                            print(f'{self.personal_list_control_file_name}, at line {line_number} - missing file for add or replace entry, skipping: {file_name}')
+                            continue
+                    
+                    if action.upper() == 'ADD':
+                        value = source.copy()
+                        
+                    value.update(additions)
+                else:
+                    print(f'{self.personal_list_control_file_name}, at line {line_number} - unknown action, skipping: {action}')
+                    continue
+                    
+                # print(f'personalize_file_name - after {action.upper()}, {value=}')
+
+                list_personalizations = self.get_list_personalizations(target_ctx_path)
+                list_personalizations.update({target_list: value})
+
+        except FileNotFoundError as e:
+            # below check is necessary because the inner try blocks above do not catch this
+            # error completely...something's odd about the way talon is handling these exceptions.
+            if os.path.basename(e.filename) == self.personal_list_control_file_name:
+                print(f'Setting  "{setting_enable_personalization.path}" is enabled, but personalization control file does not exist: {self.personal_list_control_file_name}')
+        except PersonalValueError:
+            # nothing to do
+            pass
+
+    def load_command_personalizations(self):
+        print(f'load_command_personalizations(): loading customizations from "{self.personal_command_control_file_name}"...')
+        
+        self.command_personalizations = {}
+
+        send_add_notification = False
+
+        try:
+            line_number = 0
+            for action, target_ctx_path, file_name in self.get_lines_from_csv_untracked(self.personal_command_control_file_name):
+                line_number += 1
+
+                if self.testing:
+                    # print(f'{self.personal_command_control_file_name}, at line {line_number} - {target, action, remainder}')
+                    print(f'{self.personal_command_control_file_name}, at line {line_number} - {target_ctx_path, action, file_name}')
+                    # print(f'{personalize_file_name}, at line {line_number} - {target in ctx.lists=}')
+                    pass
+
+                if not target_ctx_path in registry.contexts:
+                    print(f'{self.personal_command_control_file_name}, at line {line_number} - cannot personalize commands in a context that does not exist, skipping: {target_ctx_path}')
+                    continue
+
+                file_path = os.path.join(self.command_personalization_folder, file_name)
+
+                # WIP - not sure about this bit
+                # if target in ctx.lists.keys():
+                #     source = ctx.lists[target]
+                # else:
+                #     source = registry.lists[target][0]
+                context = registry.contexts[target_ctx_path]
+
+                commands = context.commands
+                        
+                value = {}
+                if action.upper() == 'DELETE':
+                    deletions = []
+                    try:
+                        for row in self.get_lines_from_csv_untracked(file_path):
+                            if len(row) > 1:
+                                print(f'{self.personal_command_control_file_name}, at line {line_number} - files containing deletions must have just one value per line, skipping entire file: {file_path}')
+                                raise PersonalValueError()
+                            deletions.append(row[0])
+                    except FileNotFoundError:
+                        print(f'{self.personal_command_control_file_name}, at line {line_number} - missing file for delete entry, skipping: {file_path}')
+                        continue
+
+                    # print(f'personalize_file_name - {deletions=}')
+                    value = { k: 'skip()' for k in commands.keys() if k in deletions }
+                    
+                elif action.upper() == 'REPLACE':
+                    additions = {}
+                    try:
+                        for row in self.get_lines_from_csv_untracked(file_path):
+                            if len(row) != 2:
+                                print(f'{self.personal_command_control_file_name}, at line {line_number} - files containing replacements must have just two values per line, skipping entire file: {file_path}')
+                                raise PersonalValueError()
+                            
+                            target_command = row[0]
+                            replacement_command = row[1]
+
+                            impl = commands[f'{target_command}'].target.code
+                            
+                            print(f'HERE - {replacement_command}: {impl}')
+                            additions[ target_command ] = 'skip()'
+                            additions[ replacement_command ] = impl
+                    except FileNotFoundError:
+                        print(f'{self.personal_command_control_file_name}, at line {line_number} - missing file for add or replace entry, skipping: {file_path}')
+                        continue
+                        
+                    value.update(additions)
+                else:
+                    if action.upper() == 'ADD':
+                        send_add_notification = True
+                        
+                    print(f'{self.personal_command_control_file_name}, at line {line_number} - unknown action, skipping: {action}')
+                    continue
+                    
+                # print(f'personalize_file_name - after {action.upper()}, {value=}')
+
+                command_personalizations = self.get_command_personalizations(target_ctx_path)
+                command_personalizations.update(value)
+
+        except FileNotFoundError as e:
+            # below check is necessary because the inner try blocks above do not catch this
+            # error completely...something's odd about the way talon is handling these exceptions.
+            print(f'personalize_file_name - {e.filename}')
+            if os.path.basename(e.filename) == personal_command_control_file_name:
+                print(f'Setting  "{setting_enable_personalization.path}" is enabled, but personalization control file does not exist: {personal_command_control_file_name}')
+        except PersonalValueError:
+            # nothing to do
+            pass
+
+        if send_add_notification:
+            app.notify(
+                title=self.command_add_disallowed_title,
+                body=self.command_add_disallowed_notice
+            )
+            
+
+    
     def add_tag_to_match_string(self, context_path: str, old_match_string: str, tag: str = None) -> str:
         if tag is None:
             tag = self.tag_expression
@@ -276,94 +465,6 @@ class Personalizer():
         filepath_prefix = path / filename
         return filepath_prefix
 
-    def load_list_personalizations(self):
-        print(f'load_list_personalizations.py - on_ready(): loading customizations from "{self.personal_list_control_file_name}"...')
-        new_context = None
-        
-        self.list_personalizations = {}
-        try:
-            line_number = 0
-            for action, target_ctx_path, target_list, *remainder in get_lines_from_csv(self.personal_list_control_file_name):
-                line_number += 1
-
-                if self.testing:
-                    print(f'{self.personal_list_control_file_name}, at line {line_number} - {action, target_ctx_path, target_list, remainder}')
-                    # print(f'{personalize_file_name}, at line {line_number} - {target in ctx.lists=}')
-                    pass
-
-                if not target_ctx_path in registry.contexts:
-                    print(f'{self.personal_list_control_file_name}, at line {line_number} - cannot redefine a context that does not exist, skipping: {target_ctx_path}')
-                    continue
-                
-                if not target_list in registry.lists:
-                    print(f'{self.personal_list_control_file_name}, at line {line_number} - cannot redefine a list that does not exist, skipping: {target_list}')
-                    continue
-
-                file_name = None
-                if len(remainder):
-                    file_name = os.path.join(self.list_personalization_folder, remainder[0])
-                elif action.upper() != 'REPLACE':
-                    print(f'{self.personal_list_control_file_name}, at line {line_number} - missing file name for add or delete entry, skipping: {target_list}')
-                    continue
-
-                if target_list in ctx.lists.keys():
-                    source = ctx.lists[target_list]
-                else:
-                    source = registry.lists[target_list][0]
-                        
-                value = {}
-                if action.upper() == 'DELETE':
-                    deletions = []
-                    try:
-                        for row in get_lines_from_csv(file_name):
-                            if len(row) > 1:
-                                print(f'{self.personal_list_control_file_name}, at line {line_number} - files containing deletions must have just one value per line, skipping entire file: {file_name}')
-                                raise PersonalValueError()
-                            deletions.append(row[0])
-                    except FileNotFoundError:
-                        print(f'{self.personal_list_control_file_name}, at line {line_number} - missing file for delete entry, skipping: {file_name}')
-                        continue
-
-                    # print(f'personalize_file_name - {deletions=}')
-
-                    value = source.copy()
-                    value = { k:v for k,v in source.items() if k not in deletions }
-
-                elif action.upper() == 'ADD' or action.upper() == 'REPLACE':
-                    additions = {}
-                    if file_name:  # some REPLACE entries may not have filenames, and that's okay
-                        try:
-                            for row in get_lines_from_csv(file_name):
-                                if len(row) != 2:
-                                    print(f'{self.personal_list_control_file_name}, at line {line_number} - files containing additions must have just two values per line, skipping entire file: {file_name}')
-                                    raise PersonalValueError()
-                                additions[ row[0] ] = row[1]
-                        except FileNotFoundError:
-                            print(f'{self.personal_list_control_file_name}, at line {line_number} - missing file for add or replace entry, skipping: {file_name}')
-                            continue
-                    
-                    if action.upper() == 'ADD':
-                        value = source.copy()
-                        
-                    value.update(additions)
-                else:
-                    print(f'{self.personal_list_control_file_name}, at line {line_number} - unknown action, skipping: {action}')
-                    continue
-                    
-                # print(f'personalize_file_name - after {action.upper()}, {value=}')
-
-                list_personalizations = self.get_list_personalizations(target_ctx_path)
-                list_personalizations.update({target_list: value})
-
-        except FileNotFoundError as e:
-            # below check is necessary because the inner try blocks above do not catch this
-            # error completely...something's odd about the way talon is handling these exceptions.
-            if os.path.basename(e.filename) == self.personal_list_control_file_name:
-                print(f'Setting  "{setting_enable_personalization.path}" is enabled, but personalization control file does not exist: {self.personal_list_control_file_name}')
-        except PersonalValueError:
-            # nothing to do
-            pass
-
     def get_personalizations(self, context_path: str):
         if not context_path in self.personalizations:
             self.personalizations[context_path] = {}
@@ -394,103 +495,20 @@ class Personalizer():
             
         return context_personalizations['commands']
 
-    def load_command_personalizations(self):
-        print(f'load_command_personalizations(): loading customizations from "{self.personal_command_control_file_name}"...')
-        
-        self.command_personalizations = {}
+    # added this while debugging an issue that turned out to be https://github.com/talonvoice/talon/issues/451.
+    def get_lines_from_csv_untracked(self, filename: str, escapechar='\\'):
+        """Retrieves contents of CSV file in settings dir, without tracking"""
+        path = SETTINGS_DIR / filename
+        assert filename.endswith(".csv")
 
-        send_add_notification = False
+        # read via resource to take advantage of talon's
+        # ability to reload this script for us when the resource changes
+        rows = []
+        with open(str(path), "r") as f:
+            rows = list(csv.reader(f, escapechar=escapechar))
 
-        try:
-            line_number = 0
-            for action, target_ctx_path, file_name in get_lines_from_csv_untracked(self.personal_command_control_file_name):
-                line_number += 1
-
-                if self.testing:
-                    # print(f'{self.personal_command_control_file_name}, at line {line_number} - {target, action, remainder}')
-                    print(f'{self.personal_command_control_file_name}, at line {line_number} - {target_ctx_path, action, file_name}')
-                    # print(f'{personalize_file_name}, at line {line_number} - {target in ctx.lists=}')
-                    pass
-
-                if not target_ctx_path in registry.contexts:
-                    print(f'{self.personal_command_control_file_name}, at line {line_number} - cannot personalize commands in a context that does not exist, skipping: {target_ctx_path}')
-                    continue
-
-                file_path = os.path.join(self.command_personalization_folder, file_name)
-
-                # WIP - not sure about this bit
-                # if target in ctx.lists.keys():
-                #     source = ctx.lists[target]
-                # else:
-                #     source = registry.lists[target][0]
-                context = registry.contexts[target_ctx_path]
-
-                commands = context.commands
-                        
-                value = {}
-                if action.upper() == 'DELETE':
-                    deletions = []
-                    try:
-                        for row in get_lines_from_csv(file_path):
-                            if len(row) > 1:
-                                print(f'{self.personal_command_control_file_name}, at line {line_number} - files containing deletions must have just one value per line, skipping entire file: {file_path}')
-                                raise PersonalValueError()
-                            deletions.append(row[0])
-                    except FileNotFoundError:
-                        print(f'{self.personal_command_control_file_name}, at line {line_number} - missing file for delete entry, skipping: {file_path}')
-                        continue
-
-                    # print(f'personalize_file_name - {deletions=}')
-                    value = { k: 'skip()' for k in commands.keys() if k in deletions }
-                    
-                elif action.upper() == 'REPLACE':
-                    additions = {}
-                    try:
-                        for row in get_lines_from_csv(file_path):
-                            if len(row) != 2:
-                                print(f'{self.personal_command_control_file_name}, at line {line_number} - files containing replacements must have just two values per line, skipping entire file: {file_path}')
-                                raise PersonalValueError()
-                            
-                            target_command = row[0]
-                            replacement_command = row[1]
-
-                            impl = commands[f'{target_command}'].target.code
-                            
-                            print(f'HERE - {replacement_command}: {impl}')
-                            additions[ target_command ] = 'skip()'
-                            additions[ replacement_command ] = impl
-                    except FileNotFoundError:
-                        print(f'{self.personal_command_control_file_name}, at line {line_number} - missing file for add or replace entry, skipping: {file_path}')
-                        continue
-                        
-                    value.update(additions)
-                else:
-                    if action.upper() == 'ADD':
-                        send_add_notification = True
-                        
-                    print(f'{self.personal_command_control_file_name}, at line {line_number} - unknown action, skipping: {action}')
-                    continue
-                    
-                # print(f'personalize_file_name - after {action.upper()}, {value=}')
-
-                command_personalizations = self.get_command_personalizations(target_ctx_path)
-                command_personalizations.update(value)
-
-        except FileNotFoundError as e:
-            # below check is necessary because the inner try blocks above do not catch this
-            # error completely...something's odd about the way talon is handling these exceptions.
-            print(f'personalize_file_name - {e.filename}')
-            if os.path.basename(e.filename) == personal_command_control_file_name:
-                print(f'Setting  "{setting_enable_personalization.path}" is enabled, but personalization control file does not exist: {personal_command_control_file_name}')
-        except PersonalValueError:
-            # nothing to do
-            pass
-
-        if send_add_notification:
-            app.notify(
-                title=self.command_add_disallowed_title,
-                body=self.command_add_disallowed_notice
-            )
+        print(f'returning {rows}')
+        return rows
 
 def on_ready():
     p.load_personalization()
