@@ -1,0 +1,2 @@
+DELETE,user.knausj_talon.misc.testfile.talon,testfile_deletions.csv
+REPLACE,user.knausj_talon.misc.testfile.talon,testfile_replacements.csv
