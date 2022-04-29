@@ -42,9 +42,6 @@ import pprint
 
 from talon import Context, registry, app, Module, settings, actions
 
-# from .user_settings import get_lines_from_csv_untracked, get_lines_from_csv_untracked
-from .user_settings import SETTINGS_DIR
-
 class PersonalValueError(ValueError):
     pass
 
@@ -504,6 +501,8 @@ class Personalizer():
     # added this while debugging an issue that turned out to be https://github.com/talonvoice/talon/issues/451.
     def get_lines_from_csv_untracked(self, filename: str, escapechar='\\'):
         """Retrieves contents of CSV file in settings dir, without tracking"""
+        SETTINGS_DIR = Path(__file__).parents[1] / self.personal_root_folder_name
+
         path = SETTINGS_DIR / filename
         assert filename.endswith(".csv")
 
