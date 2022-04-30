@@ -127,6 +127,7 @@ class Personalizer():
         with self.personalization_mutex:
             if os.path.exists(self.personal_folder_path):
                 rmtree(self.personal_folder_path)
+            self.personalized_files = []
 
     def load_personalization(self) -> None:
         # this code may have multiple event triggers which may overlap. it's not clear how talon
@@ -410,7 +411,6 @@ class Personalizer():
 
     def generate_files(self) -> None:
         print(f'generate_files: writing customizations to "{self.personal_folder_path}"...')
-        current_files = []
         
         self._purge_files()
 
@@ -423,48 +423,52 @@ class Personalizer():
             print(f'generate_files: {filepath_prefix=}')
             
             source_match_string = self.get_source_match_string(ctx_path)
-            print(f'generate_files: {ctx_path=}')
-            print(f'generate_files: {source_match_string=}')
-            new_match_string = self.add_tag_to_match_string(ctx_path, source_match_string)
-            print(f'generate_files: {new_match_string=}')
+            # print(f'generate_files: {ctx_path=}')
+            # print(f'generate_files: {source_match_string=}')
+            
+            self.update_one_file(ctx_path, filepath_prefix, source_match_string)
 
-            if not filepath_prefix in current_files:
+    def update_one_file(self, ctx_path, filepath_prefix, source_match_string):
+        new_match_string = self.add_tag_to_match_string(ctx_path, source_match_string)
+        print(f'generate_files: {new_match_string=}')
+
+        if not filepath_prefix in self.personalized_files:
                 # truncate on open, if exists
-                open_mode = 'w'
-            else:
+            open_mode = 'w'
+        else:
                 # append, if exists
-                open_mode = 'a'
-            current_files.append(filepath_prefix)
+            open_mode = 'a'
+        self.personalized_files.append(filepath_prefix)
 
-            print(f'generate_files: {ctx_path=}, {new_match_string=}')
+        print(f'generate_files: {ctx_path=}, {new_match_string=}')
 
-            if ctx_path.endswith('.talon'):
-                command_personalizations = self.get_command_personalizations(ctx_path)
-                filepath = str(filepath_prefix)
-                print(f'generate_files: writing command customizations to "{filepath}"...')
-                with open(filepath, open_mode) as f:
-                    self.write_talon_header(f, ctx_path)
+        if ctx_path.endswith('.talon'):
+            command_personalizations = self.get_command_personalizations(ctx_path)
+            filepath = str(filepath_prefix)
+            print(f'generate_files: writing command customizations to "{filepath}"...')
+            with open(filepath, open_mode) as f:
+                self.write_talon_header(f, ctx_path)
                     
-                    self.write_talon_context(f, new_match_string)
+                self.write_talon_context(f, new_match_string)
                     
-                    self.write_talon_tag_calls(f, ctx_path)
+                self.write_talon_tag_calls(f, ctx_path)
                     
-                    print(f'generate_files: {command_personalizations=}')
-                    for personal_command, personal_impl in command_personalizations.items():
-                        print(f'{personal_command}:', file=f)
-                        for line in personal_impl.split('\n'):
-                            print(f'\t{line}', file=f)
+                print(f'generate_files: {command_personalizations=}')
+                for personal_command, personal_impl in command_personalizations.items():
+                    print(f'{personal_command}:', file=f)
+                    for line in personal_impl.split('\n'):
+                        print(f'\t{line}', file=f)
 
-            else:
-                list_personalizations = self.get_list_personalizations(ctx_path)
-                filepath = str(filepath_prefix) + '.py'
-                print(f'generate_files: writing list customizations to "{filepath}"...')
-                with open(filepath, open_mode) as f:
-                    self.write_py_header(f, ctx_path)
-                    self.write_py_context(f, new_match_string)
-                    pp = pprint.PrettyPrinter(indent=4)
-                    for list_name, list_value in list_personalizations.items():
-                        print(f'ctx.lists["{list_name}"] = {pp.pformat(list_value)}\n', file=f)
+        else:
+            list_personalizations = self.get_list_personalizations(ctx_path)
+            filepath = str(filepath_prefix) + '.py'
+            print(f'generate_files: writing list customizations to "{filepath}"...')
+            with open(filepath, open_mode) as f:
+                self.write_py_header(f, ctx_path)
+                self.write_py_context(f, new_match_string)
+                pp = pprint.PrettyPrinter(indent=4)
+                for list_name, list_value in list_personalizations.items():
+                    print(f'ctx.lists["{list_name}"] = {pp.pformat(list_value)}\n', file=f)
 
     def get_source_match_string(self, context_path: str) -> str:
         source_match_string = None
