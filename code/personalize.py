@@ -42,9 +42,12 @@ import pprint
 from shutil import rmtree
 from typing import Any, List, Dict, Union
 
-from talon import Context, registry, app, Module, settings, actions
+from talon import Context, registry, app, Module, settings, actions, fs
 
 class PersonalValueError(ValueError):
+    pass
+
+class LoadError(Exception):
     pass
 
 class Personalizer():
@@ -110,6 +113,8 @@ class Personalizer():
                 self.unload_personalization()
 
     def unload_personalization(self) -> None:
+        print('unload_personalization: UNLOADING IS DISABLED')
+        return
         with self.personalization_mutex:
             self.personalizations = {}
             if os.path.exists(self.personal_folder_path):
@@ -132,79 +137,151 @@ class Personalizer():
                 self.ctx.tags = []
                 return
    
+    def load_one_list(self, line_number, action, target_ctx_path, target_list, remainder) -> Dict:
+        print(f'load_one_list: HERE WE ARE')
+        if not target_ctx_path in registry.contexts:
+            print(f'{self.personal_list_control_file_name}, at line {line_number} - cannot redefine a context that does not exist, skipping: "{target_ctx_path}"')
+            raise LoadError()
+        
+        if not target_list in registry.lists:
+            print(f'{self.personal_list_control_file_name}, at line {line_number} - cannot redefine a list that does not exist, skipping: "{target_list}"')
+            raise LoadError()
+
+        file_name = None
+        if len(remainder):
+            file_name = os.path.join(self.personal_list_folder_name, remainder[0])
+        elif action.upper() != 'REPLACE':
+            print(f'{self.personal_list_control_file_name}, at line {line_number} - missing file name for add or delete entry, skipping: "{target_list}"')
+            raise LoadError()
+
+        # WIP - need to review this, is it correct?
+        if target_list in self.ctx.lists.keys():
+            print(f'WE DO ACTUALLY GET HERE SOMETIMES')
+            source = self.ctx.lists[target_list]
+        else:
+            source = registry.lists[target_list][0]
+                
+        value = {}
+        if action.upper() == 'DELETE':
+            deletions = []
+            try:
+                for row in self.get_lines_from_csv(file_name):
+                    if len(row) > 1:
+                        print(f'{self.personal_list_control_file_name}, at line {line_number} - files containing deletions must have just one value per line, skipping entire file: "{file_name}"')
+                        raise PersonalValueError()
+                    deletions.append(row[0])
+            except FileNotFoundError:
+                print(f'{self.personal_list_control_file_name}, at line {line_number} - missing file for delete entry, skipping: "{file_name}"')
+                raise LoadError()
+
+            # print(f'personalize_file_name - {deletions=}')
+
+            value = source.copy()
+            value = { k:v for k,v in source.items() if k not in deletions }
+
+        elif action.upper() == 'ADD' or action.upper() == 'REPLACE':
+            additions = {}
+            if file_name:  # some REPLACE entries may not have filenames, and that's okay
+                try:
+                    for row in self.get_lines_from_csv(file_name):
+                        if len(row) != 2:
+                            print(f'{self.personal_list_control_file_name}, at line {line_number} - files containing additions must have just two values per line, skipping entire file: "{file_name}"')
+                            raise PersonalValueError()
+                        additions[ row[0] ] = row[1]
+                except FileNotFoundError:
+                    print(f'{self.personal_list_control_file_name}, at line {line_number} - missing file for add or replace entry, skipping: "{file_name}"')
+                    raise LoadError()
+            
+            if action.upper() == 'ADD':
+                value = source.copy()
+                
+            value.update(additions)
+        else:
+            print(f'{self.personal_list_control_file_name}, at line {line_number} - unknown action, skipping: "{action}"')
+            raise LoadError()
+
+        return value
+
     def load_list_personalizations(self) -> None:
         print(f'load_list_personalizations.py - on_ready(): loading customizations from "{self.personal_list_control_file_name}"...')
         
         self.list_personalizations = {}
         try:
             line_number = 0
-            for action, target_ctx_path, target_list, *remainder in self.get_lines_from_csv_untracked(self.personal_list_control_file_name):
+            for action, target_ctx_path, target_list, *remainder in self.get_lines_from_csv(self.personal_list_control_file_name):
                 line_number += 1
 
                 if self.testing:
                     print(f'{self.personal_list_control_file_name}, at line {line_number} - {action, target_ctx_path, target_list, remainder}')
                     # print(f'{personalize_file_name}, at line {line_number} - {target in ctx.lists=}')
-
-                if not target_ctx_path in registry.contexts:
-                    print(f'{self.personal_list_control_file_name}, at line {line_number} - cannot redefine a context that does not exist, skipping: "{target_ctx_path}"')
-                    continue
-                
-                if not target_list in registry.lists:
-                    print(f'{self.personal_list_control_file_name}, at line {line_number} - cannot redefine a list that does not exist, skipping: "{target_list}"')
-                    continue
-
-                file_name = None
-                if len(remainder):
-                    file_name = os.path.join(self.personal_list_folder_name, remainder[0])
-                elif action.upper() != 'REPLACE':
-                    print(f'{self.personal_list_control_file_name}, at line {line_number} - missing file name for add or delete entry, skipping: "{target_list}"')
-                    continue
-
-                # WIP - need to review this, is it correct?
-                if target_list in self.ctx.lists.keys():
-                    print(f'WE DO ACTUALLY GET HERE SOMETIMES')
-                    source = self.ctx.lists[target_list]
-                else:
-                    source = registry.lists[target_list][0]
-                        
-                value = {}
-                if action.upper() == 'DELETE':
-                    deletions = []
-                    try:
-                        for row in self.get_lines_from_csv_untracked(file_name):
-                            if len(row) > 1:
-                                print(f'{self.personal_list_control_file_name}, at line {line_number} - files containing deletions must have just one value per line, skipping entire file: "{file_name}"')
-                                raise PersonalValueError()
-                            deletions.append(row[0])
-                    except FileNotFoundError:
-                        print(f'{self.personal_list_control_file_name}, at line {line_number} - missing file for delete entry, skipping: "{file_name}"')
-                        continue
-
-                    # print(f'personalize_file_name - {deletions=}')
-
-                    value = source.copy()
-                    value = { k:v for k,v in source.items() if k not in deletions }
-
-                elif action.upper() == 'ADD' or action.upper() == 'REPLACE':
-                    additions = {}
-                    if file_name:  # some REPLACE entries may not have filenames, and that's okay
-                        try:
-                            for row in self.get_lines_from_csv_untracked(file_name):
-                                if len(row) != 2:
-                                    print(f'{self.personal_list_control_file_name}, at line {line_number} - files containing additions must have just two values per line, skipping entire file: "{file_name}"')
-                                    raise PersonalValueError()
-                                additions[ row[0] ] = row[1]
-                        except FileNotFoundError:
-                            print(f'{self.personal_list_control_file_name}, at line {line_number} - missing file for add or replace entry, skipping: "{file_name}"')
-                            continue
                     
-                    if action.upper() == 'ADD':
-                        value = source.copy()
-                        
-                    value.update(additions)
-                else:
-                    print(f'{self.personal_list_control_file_name}, at line {line_number} - unknown action, skipping: "{action}"')
+                value = None
+                try:
+                    value = self.load_one_list(line_number, action, target_ctx_path, target_list, remainder)
+                except LoadError:
+                    # WIP - circle back and pass the error string through the exception
                     continue
+
+                # if not target_ctx_path in registry.contexts:
+                #     print(f'{self.personal_list_control_file_name}, at line {line_number} - cannot redefine a context that does not exist, skipping: "{target_ctx_path}"')
+                #     continue
+                
+                # if not target_list in registry.lists:
+                #     print(f'{self.personal_list_control_file_name}, at line {line_number} - cannot redefine a list that does not exist, skipping: "{target_list}"')
+                #     continue
+
+                # file_name = None
+                # if len(remainder):
+                #     file_name = os.path.join(self.personal_list_folder_name, remainder[0])
+                # elif action.upper() != 'REPLACE':
+                #     print(f'{self.personal_list_control_file_name}, at line {line_number} - missing file name for add or delete entry, skipping: "{target_list}"')
+                #     continue
+
+                # # WIP - need to review this, is it correct?
+                # if target_list in self.ctx.lists.keys():
+                #     print(f'WE DO ACTUALLY GET HERE SOMETIMES')
+                #     source = self.ctx.lists[target_list]
+                # else:
+                #     source = registry.lists[target_list][0]
+                        
+                # value = {}
+                # if action.upper() == 'DELETE':
+                #     deletions = []
+                #     try:
+                #         for row in self.get_lines_from_csv(file_name):
+                #             if len(row) > 1:
+                #                 print(f'{self.personal_list_control_file_name}, at line {line_number} - files containing deletions must have just one value per line, skipping entire file: "{file_name}"')
+                #                 raise PersonalValueError()
+                #             deletions.append(row[0])
+                #     except FileNotFoundError:
+                #         print(f'{self.personal_list_control_file_name}, at line {line_number} - missing file for delete entry, skipping: "{file_name}"')
+                #         continue
+
+                #     # print(f'personalize_file_name - {deletions=}')
+
+                #     value = source.copy()
+                #     value = { k:v for k,v in source.items() if k not in deletions }
+
+                # elif action.upper() == 'ADD' or action.upper() == 'REPLACE':
+                #     additions = {}
+                #     if file_name:  # some REPLACE entries may not have filenames, and that's okay
+                #         try:
+                #             for row in self.get_lines_from_csv(file_name):
+                #                 if len(row) != 2:
+                #                     print(f'{self.personal_list_control_file_name}, at line {line_number} - files containing additions must have just two values per line, skipping entire file: "{file_name}"')
+                #                     raise PersonalValueError()
+                #                 additions[ row[0] ] = row[1]
+                #         except FileNotFoundError:
+                #             print(f'{self.personal_list_control_file_name}, at line {line_number} - missing file for add or replace entry, skipping: "{file_name}"')
+                #             continue
+                    
+                #     if action.upper() == 'ADD':
+                #         value = source.copy()
+                        
+                #     value.update(additions)
+                # else:
+                #     print(f'{self.personal_list_control_file_name}, at line {line_number} - unknown action, skipping: "{action}"')
+                #     continue
                     
                 # print(f'personalize_file_name - after {action.upper()}, {value=}')
 
@@ -229,7 +306,7 @@ class Personalizer():
 
         try:
             line_number = 0
-            for action, target_ctx_path, file_name in self.get_lines_from_csv_untracked(self.personal_command_control_file_name):
+            for action, target_ctx_path, file_name in self.get_lines_from_csv(self.personal_command_control_file_name):
                 line_number += 1
 
                 if self.testing:
@@ -255,7 +332,7 @@ class Personalizer():
                 if action.upper() == 'DELETE':
                     deletions = []
                     try:
-                        for row in self.get_lines_from_csv_untracked(file_path):
+                        for row in self.get_lines_from_csv(file_path):
                             if len(row) > 1:
                                 print(f'{self.personal_command_control_file_name}, at line {line_number} - files containing deletions must have just one value per line, skipping entire file: "{file_path}"')
                                 raise PersonalValueError()
@@ -270,7 +347,7 @@ class Personalizer():
                 elif action.upper() == 'REPLACE':
                     additions = {}
                     try:
-                        for row in self.get_lines_from_csv_untracked(file_path):
+                        for row in self.get_lines_from_csv(file_path):
                             if len(row) != 2:
                                 print(f'{self.personal_command_control_file_name}, at line {line_number} - files containing replacements must have just two values per line, skipping entire file: "{file_path}"')
                                 raise PersonalValueError()
@@ -417,7 +494,7 @@ class Personalizer():
                     self.write_py_context(f, new_match_string)
                     pp = pprint.PrettyPrinter(indent=4)
                     for list_name, list_value in list_personalizations.items():
-                        print(f'generate_files - ctx.lists["{list_name}"] = {pp.pformat(list_value)}\n', file=f)
+                        print(f'ctx.lists["{list_name}"] = {pp.pformat(list_value)}\n', file=f)
 
     def get_source_match_string(self, context_path: str) -> str:
         source_match_string = None
@@ -520,7 +597,7 @@ class Personalizer():
         return context_personalizations['commands']
 
     # added this while debugging an issue that turned out to be https://github.com/talonvoice/talon/issues/451.
-    def get_lines_from_csv_untracked(self, filename: str, escapechar: str ='\\') -> List[str]:
+    def get_lines_from_csv(self, filename: str, escapechar: str ='\\') -> List[str]:
         """Retrieves contents of CSV file in settings dir, without tracking"""
         
         csv_folder = self.personal_csv_folder
@@ -531,8 +608,17 @@ class Personalizer():
         with open(str(path), "r") as f:
             rows = list(csv.reader(f, escapechar=escapechar))
 
-        print(f'returning {rows}')
+        # WIP - come back here
+        # fs.watch(path, self.update_personalizations)
+
+        print(f'get_lines_from_csv: returning {rows}')
         return rows
+
+    def update_personalizations(self, name: str, flags: Any) -> None:
+        # if name != homophones_file:
+        #     return
+        print(f'update_personalizations: {name=}, {flags=}')
+        self.load_personalization()
 
 def on_ready() -> None:
     personalizer.load_personalization()
