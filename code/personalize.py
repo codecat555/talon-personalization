@@ -119,8 +119,6 @@ class Personalizer():
                 self.unload_personalization()
 
     def unload_personalization(self) -> None:
-        # print('unload_personalization: UNLOADING IS DISABLED')
-        # return
         with self.personalization_mutex:
             self.personalizations = {}
             self._purge_files()
@@ -151,15 +149,6 @@ class Personalizer():
                 return
    
     def load_one_list(self, caller_line_number, action, target_list, remainder) -> Dict:
-        # print(f'load_one_list: HERE WE ARE')
-        # if not target_ctx_path in registry.contexts:
-        #     print(f'{self.personal_list_control_file_name}, at line {line_number} - cannot redefine a context that does not exist, skipping: "{target_ctx_path}"')
-        #     
-        
-        # if not target_list in registry.lists:
-        #     print(f'{self.personal_list_control_file_name}, at line {line_number} - cannot redefine a list that does not exist, skipping: "{target_list}"')
-        #     
-
         file_path = None
         if len(remainder):
             file_path = os.path.join(self.personal_list_folder_name, remainder[0])
@@ -194,10 +183,6 @@ class Personalizer():
             if file_path:  # some REPLACE entries may not have filenames, and that's okay
                 try:
                     for row in self.load_count_items_per_row(2, file_path):
-                    # for row in self.get_lines_from_csv(file_name):
-                    #     if len(row) != 2:
-                    #         print(f'{self.personal_list_control_file_name}, at line {line_number} - files containing additions must have just two values per line, skipping entire file: "{file_name}"')
-                    #         raise PersonalValueError()
                         additions[ row[0] ] = row[1]
                 except ItemCountError:
                     raise LoadError(f'{self.personal_list_control_file_name}, at line {caller_line_number} - files containing additions must have just two values per line, skipping entire file: "{file_path}"')
@@ -292,12 +277,8 @@ class Personalizer():
             deletions = []
             try:
                 deletions = self.load_count_items_per_row(1, file_path)
-                # deletions.append(row[0])
             except ItemCountError:
                 raise LoadError(f'load_command_personalizations: {self.personal_command_control_file_name}, at line {caller_line_number} - files containing deletions must have just one value per line, skipping entire file: "{file_path}"')
-                #     if len(row) > 1:
-                #         raise LoadError(f'load_command_personalizations: {self.personal_command_control_file_name}, at line {caller_line_number} - files containing deletions must have just one value per line, skipping entire file: "{file_path}"')
-                #         raise PersonalValueError()
             except FileNotFoundError:
                 raise LoadError(f'load_command_personalizations: {self.personal_command_control_file_name}, at line {caller_line_number} - missing file for delete entry, skipping: "{file_path}"')
 
@@ -307,23 +288,6 @@ class Personalizer():
         elif action.upper() == 'REPLACE':
             additions = {}
             try:
-                # for row in self.get_lines_from_csv(file_path):
-                #     if len(row) != 2:
-                #         raise LoadError(f'load_command_personalizations: {self.personal_command_control_file_name}, at line {caller_line_number} - files containing replacements must have just two values per line, skipping entire file: "{file_path}"')
-                #         raise PersonalValueError()
-                    
-                #     target_command = row[0]
-                #     replacement_command = row[1]
-
-                #     try:
-                #         impl = commands[f'{target_command}'].target.code
-                #     except KeyError as e:
-                #         raise LoadError(f'load_command_personalizations: {self.personal_command_control_file_name}, at line {caller_line_number} - cannot replace a command that does not exist, skipping: "{target_command}"')
-                # for row in self.get_lines_from_csv(file_name):
-                #     if len(row) != 2:
-                #         print(f'{self.personal_list_control_file_name}, at line {line_number} - files containing additions must have just two values per line, skipping entire file: "{file_name}"')
-                #         raise PersonalValueError()
-                #    additions[ row[0] ] = row[1]
                 for row in self.load_count_items_per_row(2, file_path):
                     target_command = row[0]
                     replacement_command = row[1]
@@ -372,70 +336,12 @@ class Personalizer():
 
                 command_personalizations = self.get_command_personalizations(target_ctx_path)
 
-
-                # # WIP - not sure about this bit
-                # # if target in ctx.lists.keys():
-                # #     source = ctx.lists[target]
-                # # else:
-                # #     source = registry.lists[target][0]
-                # context = registry.contexts[target_ctx_path]
-                # commands = context.commands
-
                 value = None
                 try:
                     value, send_add_notification = self.load_one_command_context(line_number, action, target_ctx_path, file_name)
                 except LoadError as e:
                     print(str(e))
                     continue
-
-                # value = {}
-                # if action.upper() == 'DELETE':
-                #     deletions = []
-                #     try:
-                #         for row in self.get_lines_from_csv(file_path):
-                #             if len(row) > 1:
-                #                 print(f'load_command_personalizations: {self.personal_command_control_file_name}, at line {line_number} - files containing deletions must have just one value per line, skipping entire file: "{file_path}"')
-                #                 raise PersonalValueError()
-                #             deletions.append(row[0])
-                #     except FileNotFoundError:
-                #         print(f'load_command_personalizations: {self.personal_command_control_file_name}, at line {line_number} - missing file for delete entry, skipping: "{file_path}"')
-                #         continue
-
-                #     # print(f'personalize_file_name - {deletions=}')
-                #     value = { k: 'skip()' for k in commands.keys() if k in deletions }
-                    
-                # elif action.upper() == 'REPLACE':
-                #     additions = {}
-                #     try:
-                #         for row in self.get_lines_from_csv(file_path):
-                #             if len(row) != 2:
-                #                 print(f'load_command_personalizations: {self.personal_command_control_file_name}, at line {line_number} - files containing replacements must have just two values per line, skipping entire file: "{file_path}"')
-                #                 raise PersonalValueError()
-                            
-                #             target_command = row[0]
-                #             replacement_command = row[1]
-
-                #             try:
-                #                 impl = commands[f'{target_command}'].target.code
-                #             except KeyError as e:
-                #                 print(f'load_command_personalizations: {self.personal_command_control_file_name}, at line {line_number} - cannot replace a command that does not exist, skipping: "{target_command}"')
-                #                 continue
-                            
-                #             additions[ target_command ] = 'skip()'
-                #             additions[ replacement_command ] = impl
-                #     except FileNotFoundError:
-                #         print(f'load_command_personalizations: {self.personal_command_control_file_name}, at line {line_number} - missing file for add or replace entry, skipping: "{file_path}"')
-                #         continue
-                        
-                #     value.update(additions)
-                # else:
-                #     if action.upper() == 'ADD':
-                #         send_add_notification = True
-                        
-                #     print(f'load_command_personalizations: {self.personal_command_control_file_name}, at line {line_number} - unknown action, skipping: "{action}"')
-                #     continue
-                    
-                # print(f'personalize_file_name - AFTER {action.upper()}, {value=}')
 
                 command_personalizations.update(value)
 
