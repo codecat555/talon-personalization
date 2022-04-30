@@ -39,31 +39,26 @@ import threading
 from pathlib import Path
 import csv
 import pprint
+from shutil import rmtree
 
 from talon import Context, registry, app, Module, settings, actions
 
 class PersonalValueError(ValueError):
     pass
 
-mod = Module()
+# mod = Module()
 
-setting_enable_personalization = mod.setting(
-    "enable_personalization",
-    type=bool,
-    default=False,
-    desc="Whether to enable the personalizations defined by the CSV files in the settings folder.",
-)
+# setting_enable_personalization = mod.setting(
+#     "enable_personalization",
+#     type=bool,
+#     default=False,
+#     desc="Whether to enable the personalizations defined by the CSV files in the settings folder.",
+# )
 
-personalization_tag = mod.tag('personalization', desc='enable personalizations')
+# ctx = Context()
 
-mod.list("test_list_replacement", desc="a list for testing the personalization replacement feature")
-
-ctx = Context()
-ctx.matches = r"""
-tag: user.personalization
-"""
-
-ctx.lists["user.test_list_replacement"] = {'one': 'blue', 'two': 'red', 'three': 'green'}
+# mod.list("test_list_replacement", desc="a list for testing the personalization replacement feature")
+# ctx.lists["user.test_list_replacement"] = {'one': 'blue', 'two': 'red', 'three': 'green'}
 
 # b,x = [(x[0],registry.contexts[x[1]]) for x in enumerate(registry.contexts)][152]
 # y = [v for k,v in x.commands.items() if v.rule.rule == 'term user.word>'][0]
@@ -71,45 +66,77 @@ ctx.lists["user.test_list_replacement"] = {'one': 'blue', 'two': 'red', 'three':
 class Personalizer():
     def __init__(self):
         self.personalization_mutex: threading.RLock = threading.RLock()
-        self.command_add_disallowed_title = "Talon - ADD not allowed for commands"
-        self.command_add_disallowed_notice = 'Command personalization: to add new commands, use a .talon file.'
 
+        self.mod = Module()
+        self.enable_setting = self.mod.setting(
+            "enable_personalization",
+            type=bool,
+            default=False,
+            desc="Whether to enable the personalizations defined by the CSV files in the settings folder.",
+        )
+
+        self.personalization_tag_name = 'personalization'
+        self.personalization_tag_name_qualified = 'user.' + self.personalization_tag_name
+        self.personalization_tag = self.mod.tag(self.personalization_tag_name, desc='enable personalizations')
+
+        self.ctx = Context()
+        self.ctx.matches = f'tag: {self.personalization_tag_name_qualified}'
+        
         self.personalizations = {}
 
         self.control_file_name = 'control.csv'
 
         self.personal_csv_folder_name = 'csv'
-        self.personal_root_folder_name = '_personalizations'
-        # self.personal_root_path = actions.path.talon_user() / self.personal_root_folder_name
-        self.personal_root_path = Path(__file__).parents[1] / self.personal_root_folder_name
+        self.personal_csv_folder = Path(__file__).parents[1] / self.personal_csv_folder_name
+        
+        self.personal_folder_name = '_personalizations'
+        self.personal_folder_path = Path(__file__).parents[1] / self.personal_folder_name
 
-        self.list_personalization_folder = 'list_personalization'
-        self.command_personalization_folder = 'command_personalization'
+        self.personal_list_folder_name = 'list_personalization'
+        self.personal_list_control_file_name = os.path.join(self.personal_list_folder_name, self.control_file_name)
 
-        self.personal_list_control_file_name = os.path.join(self.list_personalization_folder, self.control_file_name)
-        self.personal_command_control_file_name = os.path.join(self.command_personalization_folder, self.control_file_name)
+        self.personal_command_folder_name = 'command_personalization'
+        self.personal_command_control_file_name = os.path.join(self.personal_command_folder_name, self.control_file_name)
+        
+        self.command_add_disallowed_title = "Talon - ADD not allowed for commands"
+        self.command_add_disallowed_notice = 'Command personalization: to add new commands, use a .talon file.'
 
         self.testing = True
-
-        self.py_header = '# This file has been dynamically generated in order to override some of the definitions from context '
+  
+        self.py_header = r"""
+# DO NOT MODIFY THIS FILE - it has been dynamically generated in order to override some of
+# the definitions from context '{}'.
+#
+# To customize this file, copy it to a different location outside the '{}'
+# folder. Be sure you understand how Talon context matching works, so you can avoid conflicts
+# with this file. If you do that, you may also want to remove the control.csv line that creates
+# this file.
+#"""
         self.talon_header = self.py_header
 
         self.tag_expression = f'tag: user.personalization'
 
-    def load_personalization(self):
-        if not settings.get('user.enable_personalization'):
-            return
+    def refresh_settings(self, target_ctx, new_value):
+        # print(f'refresh_settings() - {target_ctx=}, {new_value=}')
+        if target_ctx == self.enable_setting.path:
+            self.load_personalization()
 
-        # this code has multiple event triggers which may overlap. it's not clear how talon
-        # handles that case, so use a mutex here to make sure only one copy runs at a time.
+    def load_personalization(self):
+        # this code may have multiple event triggers which may overlap. it's not clear how talon
+        # handles that case, so we use a mutex here to make sure only one copy runs at a time.
         #
         # note: this mutex may not actually be needed, I put it in because I was seeing multiple simultaneous
-        # invocations of this code back when I was still using the stock CSV reader code...seems to have been
-        # due to https://github.com/talonvoice/talon/issues/451.
+        # invocations of this code back when I was still using the stock CSV reader code...that behavior seems
+        # to have been due to https://github.com/talonvoice/talon/issues/451.
         with self.personalization_mutex:
-            self.load_list_personalizations()
-            self.load_command_personalizations()
-            self.generate_files()
+            if settings.get('user.enable_personalization'):
+                self.ctx.tags = [self.personalization_tag_name_qualified]
+                self.load_list_personalizations()
+                self.load_command_personalizations()
+                self.generate_files()
+            else:
+                self.ctx.tags = []
+                return
    
     def load_list_personalizations(self):
         print(f'load_list_personalizations.py - on_ready(): loading customizations from "{self.personal_list_control_file_name}"...')
@@ -136,13 +163,13 @@ class Personalizer():
 
                 file_name = None
                 if len(remainder):
-                    file_name = os.path.join(self.list_personalization_folder, remainder[0])
+                    file_name = os.path.join(self.personal_list_folder_name, remainder[0])
                 elif action.upper() != 'REPLACE':
                     print(f'{self.personal_list_control_file_name}, at line {line_number} - missing file name for add or delete entry, skipping: "{target_list}"')
                     continue
 
-                if target_list in ctx.lists.keys():
-                    source = ctx.lists[target_list]
+                if target_list in self.ctx.lists.keys():
+                    source = self.ctx.lists[target_list]
                 else:
                     source = registry.lists[target_list][0]
                         
@@ -194,7 +221,7 @@ class Personalizer():
             # below check is necessary because the inner try blocks above do not catch this
             # error completely...something's odd about the way talon is handling these exceptions.
             if os.path.basename(e.filename) == self.personal_list_control_file_name:
-                print(f'Setting  "{setting_enable_personalization.path}" is enabled, but personalization control file does not exist: "{self.personal_list_control_file_name}"')
+                print(f'Setting  "{self.setting_enable_personalization.path}" is enabled, but personalization control file does not exist: "{self.personal_list_control_file_name}"')
         except PersonalValueError:
             # nothing to do
             pass
@@ -221,7 +248,7 @@ class Personalizer():
                     print(f'{self.personal_command_control_file_name}, at line {line_number} - cannot personalize commands in a context that does not exist, skipping: "{target_ctx_path}"')
                     continue
 
-                file_path = os.path.join(self.command_personalization_folder, file_name)
+                file_path = os.path.join(self.personal_command_folder_name, file_name)
 
                 # WIP - not sure about this bit
                 # if target in ctx.lists.keys():
@@ -290,7 +317,7 @@ class Personalizer():
             # error completely...something's odd about the way talon is handling these exceptions.
             print(f'personalize_file_name - {e.filename}')
             if os.path.basename(e.filename) == self.personal_command_control_file_name:
-                print(f'Setting  "{setting_enable_personalization.path}" is enabled, but personalization control file does not exist: "{personal_command_control_file_name}"')
+                print(f'Setting  "{self.setting_enable_personalization.path}" is enabled, but personalization control file does not exist: "{self.personal_command_control_file_name}"')
         except PersonalValueError:
             # nothing to do
             pass
@@ -327,7 +354,9 @@ class Personalizer():
         return wip, filename
 
     def write_py_header(self, f, context_path):
-        print(f'{self.py_header}{context_path}', file=f)
+        header = self.py_header.format(context_path, self.personal_folder_name)
+        # print(f'{self.py_header}{context_path}', file=f)
+        print(header, file=f)
 
     def write_py_context(self, f, context_path, match_string):
         print('from talon import Context', file=f)
@@ -335,7 +364,8 @@ class Personalizer():
         print(f'ctx.matches = """{match_string}"""\n', file=f)
 
     def write_talon_header(self, f, context_path):
-        print(f'{self.talon_header}{context_path}', file=f)
+        header = self.talon_header.format(context_path, self.personal_folder_name)
+        print(header, file=f)
 
     def write_talon_context(self, f, context_path, match_string):
         print(f'{match_string}\n-', file=f)
@@ -346,8 +376,12 @@ class Personalizer():
         print(file=f)
 
     def generate_files(self):
-        print(f'personalize.py - generate_files(): writing customizations to "{self.personal_root_path}"...')
+        print(f'personalize.py - generate_files(): writing customizations to "{self.personal_folder_path}"...')
         current_files = []
+        
+        if os.path.exists(self.personal_folder_path):
+            rmtree(self.personal_folder_path)
+            
         for ctx_path in self.personalizations:
             # print(f'generate_files: {ctx_path=}')
 
@@ -461,7 +495,7 @@ class Personalizer():
 
     def get_personal_filepath_prefix(self, ctx_path):
         path_prefix, filename = self.get_fs_path_prefix(ctx_path)
-        path = self.personal_root_path / path_prefix
+        path = self.personal_folder_path / path_prefix
         if not os.path.exists(path):
             os.makedirs(path, mode=550, exist_ok=True)
             
@@ -501,13 +535,11 @@ class Personalizer():
     # added this while debugging an issue that turned out to be https://github.com/talonvoice/talon/issues/451.
     def get_lines_from_csv_untracked(self, filename: str, escapechar='\\'):
         """Retrieves contents of CSV file in settings dir, without tracking"""
-        SETTINGS_DIR = Path(__file__).parents[1] / self.personal_root_folder_name
+        
+        csv_folder = self.personal_csv_folder
 
-        path = SETTINGS_DIR / filename
+        path = csv_folder / filename
         assert filename.endswith(".csv")
-
-        # read via resource to take advantage of talon's
-        # ability to reload this script for us when the resource changes
         rows = []
         with open(str(path), "r") as f:
             rows = list(csv.reader(f, escapechar=escapechar))
@@ -516,16 +548,12 @@ class Personalizer():
         return rows
 
 def on_ready():
-    p.load_personalization()
+    personalizer.load_personalization()
 
     # catch updates
-    settings.register("", refresh_settings)
+    settings.register("", personalizer.refresh_settings)
     
-def refresh_settings(setting_path, new_value):
-        # print(f'refresh_settings() - {setting_path=}, {new_value=}')
-        if setting_path == setting_enable_personalization.path:
-            p.load_personalization()
 
-p = Personalizer()
+personalizer = Personalizer()
 
 app.register("ready", on_ready)
