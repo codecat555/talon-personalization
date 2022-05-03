@@ -293,21 +293,22 @@ class Personalizer():
                     if os.path.exists(csv_file_path):
                         self._watch(csv_file_path, self.update_csv)
                     else:
-                        logging.error(f'file not found for {action.upper()} entry, skipping: "{csv_file_path}"')
+                        logging.error(f'load_list_personalizations: file not found for {action.upper()} entry, skipping: "{csv_file_path}"')
                         continue
                 elif action.upper() != 'REPLACE':
-                    logging.error(f'missing file name for {action.upper()} entry, skipping: "{target_list}"')
+                    logging.error(f'load_list_personalizations: missing file name for {action.upper()} entry, skipping: "{target_list}"')
                     continue
 
                 if target_contexts:
                     # we are loading some, not all, contexts. see if the current target matches given list.
                     for ctx_path in target_contexts:
+                        # WIP - find a better way than hard coding 'user.' here
                         if target_ctx_path.startswith('user.' + ctx_path):
                             break
                     else:
                         # current target is not in the list of targets, skip
                         if self.testing:
-                            print(f'load_list_personalizations: {control_file}, SKIPPING at line {line_number} - {target_ctx_path} not in {target_contexts}')
+                            print(f'load_list_personalizations: {control_file}, SKIPPING at line {line_number} - {target_ctx_path} not in given list of target contexts')
                         continue
                     
                 if self.testing:
@@ -322,11 +323,12 @@ class Personalizer():
                         # consume the list as we go so at the end we know if we missed any paths
                         target_config_paths.remove(str(csv_file_path))
                     else:
-                        # print(f'SKIPPING {csv_file_path}, because it is NOT in "{target_config_paths}"')
+                        if self.testing:
+                            print(f'load_list_personalizations: {control_file}, SKIPPING at line {line_number} - {csv_file_path} is NOT in given list of target config paths')
                         continue
 
                 if not target_ctx_path in registry.contexts:
-                    logging.error(f'cannot redefine a context that does not exist, skipping: "{target_ctx_path}"')
+                    logging.error(f'load_list_personalizations: cannot redefine a context that does not exist, skipping: "{target_ctx_path}"')
                     continue
                 
                 # WIP - should make self.personalizations a property and clean this up
@@ -353,7 +355,7 @@ class Personalizer():
         except FileNotFoundError as e:
             # below check is necessary because the inner try blocks above do not catch this error
             # completely...something's odd about the way talon is handling these exceptions.
-            logging.warning(f'Setting "{self.setting_enable_personalization.path}" is enabled, but personalization config file does not exist: "{e.filename}"')
+            logging.warning(f'load_list_personalizations: setting "{self.setting_enable_personalization.path}" is enabled, but personalization config file does not exist: "{e.filename}"')
 
     def _watch_source_file_for_context(self, ctx_path, method_ref):
         """Internal method to watch the file associated with a given context."""
@@ -500,6 +502,9 @@ class Personalizer():
                     print(f'load_command_personalizations: {control_file}, at line {line_number} - {target_ctx_path, action, csv_file_name}')
 
                 if target_contexts and not target_ctx_path in target_contexts:
+                    # current target is not in the list of targets, skip
+                    if self.testing:
+                        print(f'load_command_personalizations: {control_file}, SKIPPING at line {line_number} - {target_ctx_path} not in list of target contexts')
                     continue
 
                 if target_config_paths:
@@ -507,6 +512,8 @@ class Personalizer():
                         # consume the list as we go so at the end we know if we missed any paths
                         target_config_paths.remove(csv_file_path)
                     else:
+                        if self.testing:
+                            print(f'load_command_personalizations: {control_file}, SKIPPING at line {line_number} - {csv_file_path} is NOT in given list of target config paths')
                         continue
 
                 if not target_ctx_path in registry.contexts:
@@ -531,7 +538,7 @@ class Personalizer():
         except FileNotFoundError as e:
             # this block is necessary because the inner try blocks above do not catch this error
             # completely ...something's odd about the way talon is handling these exceptions.
-            logging.warning(f'Setting "{self.setting_enable_personalization.path}" is enabled, but personalization config file does not exist: "{e.filename}"')
+            logging.warning(f'load_command_personalizations: setting "{self.setting_enable_personalization.path}" is enabled, but personalization config file does not exist: "{e.filename}"')
 
         if target_config_paths:
             # WIP - need to check the case where a config path has been deleted
