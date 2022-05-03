@@ -41,6 +41,7 @@ import csv
 import pprint
 from shutil import rmtree
 from typing import Any, List, Dict, Union, Tuple, Callable
+import logging
 
 from talon import Context, registry, app, Module, settings, actions, fs
 
@@ -156,7 +157,8 @@ class Personalizer():
         """Internal method to stop watching all watched files associated with given method reference."""
         watched_paths = self._get_watched_paths_for_method(method_ref)
         for p in watched_paths:
-            print(f'unwatch_all: unwatching {path}')
+            if self.testing:
+                print(f'unwatch_all: unwatching {path}')
             self._unwatch(p, method_ref)
             
     def _purge_files(self, path: str = None) -> None:
@@ -259,7 +261,8 @@ class Personalizer():
             
         control_file = self.personal_csv_folder / self.personal_list_control_file_name
         
-        print(f'load_list_personalizations: loading customizations from "{control_file}"...')
+        if self.testing:
+            print(f'load_list_personalizations: loading customizations from "{control_file}"...')
         
         if target_config_paths and control_file in target_config_paths:
             # if we're reloading the control file, then we're doing everything anyways
@@ -290,10 +293,10 @@ class Personalizer():
                     if os.path.exists(csv_file_path):
                         self._watch(csv_file_path, self.update_csv)
                     else:
-                        print(f'file not found for {action.upper()} entry, skipping: "{csv_file_path}"')
+                        logging.error(f'file not found for {action.upper()} entry, skipping: "{csv_file_path}"')
                         continue
                 elif action.upper() != 'REPLACE':
-                    print(f'missing file name for {action.upper()} entry, skipping: "{target_list}"')
+                    logging.error(f'missing file name for {action.upper()} entry, skipping: "{target_list}"')
                     continue
 
                 if target_contexts:
@@ -303,7 +306,8 @@ class Personalizer():
                             break
                     else:
                         # current target is not in the list of targets, skip
-                        print(f'load_list_personalizations: {control_file}, SKIPPING at line {line_number} - {target_ctx_path} not in {target_contexts}')
+                        if self.testing:
+                            print(f'load_list_personalizations: {control_file}, SKIPPING at line {line_number} - {target_ctx_path} not in {target_contexts}')
                         continue
                     
                 if self.testing:
@@ -322,7 +326,7 @@ class Personalizer():
                         continue
 
                 if not target_ctx_path in registry.contexts:
-                    print(f'cannot redefine a context that does not exist, skipping: "{target_ctx_path}"')
+                    logging.error(f'cannot redefine a context that does not exist, skipping: "{target_ctx_path}"')
                     continue
                 
                 # WIP - should make self.personalizations a property and clean this up
@@ -332,10 +336,10 @@ class Personalizer():
                 try:
                     value = self.load_one_list_context(action, target_list, csv_file_path)
                 except FilenameError as e:
-                    print(f'load_list_personalizations: {control_file}, SKIPPING at line {line_number} - {str(e)}')
+                    logging.error(f'load_list_personalizations: {control_file}, SKIPPING at line {line_number} - {str(e)}')
                     continue
                 except LoadError as e:
-                    print(f'load_list_personalizations: {control_file}, SKIPPING at line {line_number} - {str(e)}')
+                    logging.error(f'load_list_personalizations: {control_file}, SKIPPING at line {line_number} - {str(e)}')
                     continue
 
                 # print(f'load_list_personalizations: AFTER {action.upper()}, {value=}')
@@ -349,8 +353,7 @@ class Personalizer():
         except FileNotFoundError as e:
             # below check is necessary because the inner try blocks above do not catch this error
             # completely...something's odd about the way talon is handling these exceptions.
-            if os.path.basename(e.filename) == control_file:
-                print(f'load_list_personalizations: Setting  "{self.setting_enable_personalization.path}" is enabled, but personalization control file does not exist: "{control_file}"')
+            logging.warning(f'Setting "{self.setting_enable_personalization.path}" is enabled, but personalization config file does not exist: "{e.filename}"')
 
     def _watch_source_file_for_context(self, ctx_path, method_ref):
         """Internal method to watch the file associated with a given context."""
@@ -370,17 +373,21 @@ class Personalizer():
 
     def _watch(self, path, method_ref):
         """Internal wrapper method to set a file watch."""
-        # print(f'watch: {path=} {method_ref=}')
-        short_path = Path(path).name
-        print(f'watch: {short_path=}')
+
+        # if self.testing:
+        #     # print(f'watch: {path=} {method_ref=}')
+        #     short_path = Path(path).name
+        #     print(f'watch: {short_path=}')
 
         fs.watch(path, method_ref)
 
     def _unwatch(self, path, method_ref):
         """Internal wrapper method to clear (unset) a file watch."""
-        # print(f'unwatch: {path=} {method_ref=}')
-        short_path = Path(path).name
-        print(f'unwatch: {short_path=}')
+        
+        # if self.testing:
+        #     # print(f'unwatch: {path=} {method_ref=}')
+        #     short_path = Path(path).name
+        #     print(f'unwatch: {short_path=}')
 
         fs.unwatch(path, method_ref)
 
@@ -455,7 +462,8 @@ class Personalizer():
         
         control_file = self.personal_csv_folder / self.personal_command_control_file_name
 
-        print(f'load_command_personalizations: loading customizations from "{control_file}"...')
+        if self.testing:
+            print(f'load_command_personalizations: loading customizations from "{control_file}"...')
         
         if target_config_paths and control_file in target_config_paths:
             # if we're reloading the control file, then we're doing everything anyways
@@ -484,7 +492,7 @@ class Personalizer():
                 if os.path.exists(csv_file_path):
                     self._watch(csv_file_path, self.update_csv)
                 else:
-                    print(f'load_command_personalizations: {control_file}, at line {line_number} - file not found for {action.upper()} entry, skipping: "{csv_file_path}"')
+                    logging.error(f'load_command_personalizations: {control_file}, at line {line_number} - file not found for {action.upper()} entry, skipping: "{csv_file_path}"')
                     continue
                 
                 if self.testing:
@@ -502,7 +510,7 @@ class Personalizer():
                         continue
 
                 if not target_ctx_path in registry.contexts:
-                    print(f'load_command_personalizations: {control_file}, at line {line_number} - cannot personalize commands for a context that does not exist, skipping: "{target_ctx_path}"')
+                    logging.error(f'load_command_personalizations: {control_file}, at line {line_number} - cannot personalize commands for a context that does not exist, skipping: "{target_ctx_path}"')
                     continue
 
                 command_personalizations = self.get_command_personalizations(target_ctx_path)
@@ -511,7 +519,7 @@ class Personalizer():
                 try:
                     value, send_add_notification = self.load_one_command_context(action, target_ctx_path, csv_file_path)
                 except LoadError as e:
-                    print(f'load_command_personalizations: {control_file}, at line {line_number} - {str(e)}')
+                    logging.error(f'load_command_personalizations: {control_file}, at line {line_number} - {str(e)}')
                     continue
 
                 command_personalizations.update(value)
@@ -519,17 +527,15 @@ class Personalizer():
                 self._watch_source_file_for_context(target_ctx_path, self.update_personalizations)
 
         except FilenameError as e:
-            print(f'load_command_personalizations: {control_file}, at line {line_number} - {str(e)}')
+            logging.error(f'load_command_personalizations: {control_file}, at line {line_number} - {str(e)}')
         except FileNotFoundError as e:
-            # below check is necessary because the inner try blocks above do not catch this
-            # error completely...something's odd about the way talon is handling these exceptions.
-            print(f'personalize_file_name - {e.filename}')
-            if os.path.basename(e.filename) == control_file:
-                print(f'Setting  "{self.setting_enable_personalization.path}" is enabled, but personalization control file does not exist: "{control_file}"')
+            # this block is necessary because the inner try blocks above do not catch this error
+            # completely ...something's odd about the way talon is handling these exceptions.
+            logging.warning(f'Setting "{self.setting_enable_personalization.path}" is enabled, but personalization config file does not exist: "{e.filename}"')
 
         if target_config_paths:
             # WIP - need to check the case where a config path has been deleted
-            print(f'load_command_personalizations: failed to process some targeted config paths: "{target_config_paths}"')
+            logging.error(f'load_command_personalizations: failed to process some targeted config paths: "{target_config_paths}"')
 
         # WIP - review this, repeated notifications will be annoying if there are many file updates
         if send_add_notification:
@@ -602,7 +608,8 @@ class Personalizer():
 
     def generate_files(self) -> None:
         """Generate personalization files from current metadata."""
-        print(f'generate_files: writing customizations to "{self.personal_folder_path}"...')
+        if self.testing:
+            print(f'generate_files: writing customizations to "{self.personal_folder_path}"...')
         
         self._purge_files()
 
@@ -638,7 +645,10 @@ class Personalizer():
         if ctx_path.endswith('.talon'):
             command_personalizations = self.get_command_personalizations(ctx_path)
             file_path = str(file_path)
-            print(f'update_one_file: writing command customizations to "{file_path}"...')
+
+            if self.testing:
+                print(f'update_one_file: writing command customizations to "{file_path}"...')
+                
             with open(file_path, open_mode) as f:
                 self._write_talon_header(f, ctx_path)
                     
@@ -655,7 +665,10 @@ class Personalizer():
         else:
             list_personalizations = self.get_list_personalizations(ctx_path)
             file_path = str(file_path) + '.py'
-            print(f'update_one_file: writing list customizations to "{file_path}"...')
+
+            if self.testing:
+                print(f'update_one_file: writing list customizations to "{file_path}"...')
+                
             with open(file_path, open_mode) as f:
                 self._write_py_header(f, ctx_path)
                 self._write_py_context(f, new_match_string)
@@ -823,11 +836,17 @@ class Personalizer():
 
     def update_personalizations(self, path: str, flags: Any) -> None:
         """Callback method for updating personalized contexts after changes to associated source files."""
-        print(f'update_personalizations: starting - {path, flags}')
+        
+        if self.testing:
+            print(f'update_personalizations: starting - {path, flags}')
+            
         reload = flags.exists
         if reload:
             ctx_path = self.get_context_from_path(path)
-            print(f'update_personalizations: {ctx_path=}')
+
+            if self.testing:
+                print(f'update_personalizations: {ctx_path=}')
+                
             if ctx_path.endswith('.talon'):
                 self.load_command_personalizations(target_contexts = [ctx_path])
             else:
@@ -837,11 +856,12 @@ class Personalizer():
             
     def update_csv(self, path: str, flags: Any) -> None:
         """Callback method for updating personalized contexts after changes to personalization configuration files."""
-        if testing:
+        if self.testing:
             print(f'update_csv: starting - {path, flags}')
-            watched_paths = self._get_watched_paths_for_method(self.update_csv)
-            matching_paths = [p for p in watched_paths if p == path]
-            print(f'update_csv: TESTING: {len(watched_paths), len(matching_paths)}')
+
+            # watched_paths = self._get_watched_paths_for_method(self.update_csv)
+            # matching_paths = [p for p in watched_paths if p == path]
+            # print(f'update_csv: TESTING: {len(watched_paths), len(matching_paths)}')
 
         reload = flags.exists
         if reload:
@@ -862,7 +882,7 @@ class Personalizer():
 
 def on_ready() -> None:
     """Callback method for updating personalizations."""
-    print('ON READY')
+
     personalizer.load_personalizations()
 
     # catch updates
