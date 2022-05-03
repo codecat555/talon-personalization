@@ -88,8 +88,8 @@ class Personalizer():
         self.personal_folder_path = Path(__file__).parents[1] / self.personal_folder_name
         
         # where config files are stored
-        self.personal_csv_folder_name = 'csv'
-        self.personal_csv_folder = Path(__file__).parents[1] / self.personal_csv_folder_name
+        self.personal_config_folder_name = 'csv'
+        self.personal_config_folder = Path(__file__).parents[1] / self.personal_config_folder_name
 
         # config sub folder for list personalizations
         self.personal_list_folder_name = 'list_personalization'
@@ -115,8 +115,8 @@ class Personalizer():
 #
 # To customize this file, copy it to a different location outside the '{}'
 # folder. Be sure you understand how Talon context matching works, so you can avoid conflicts
-# with this file. If you do that, you may also want to remove the control.csv line that creates
-# this file.
+# with this file. If you do that, you may also want to remove the control file line that
+# creates this file.
 #"""
 
         # tag for personalized context matches
@@ -190,7 +190,7 @@ class Personalizer():
                 self.unload_personalizations()
                 return
    
-    def load_one_list_context(self, action, target_list, csv_file_path) -> Dict:
+    def load_one_list_context(self, action, target_list, config_file_path) -> Dict:
         """Load a single list context."""
         
         try:
@@ -209,12 +209,12 @@ class Personalizer():
             deletions = []
             try:
                 # load items from config file
-                deletions = self._load_count_items_per_row(1, csv_file_path)
+                deletions = self._load_count_items_per_row(1, config_file_path)
             except ItemCountError:
-                raise LoadError(f'files containing deletions must have just one value per line, skipping entire file: "{csv_file_path}"')
+                raise LoadError(f'files containing deletions must have just one value per line, skipping entire file: "{config_file_path}"')
                 
             except FileNotFoundError:
-                raise LoadError(f'missing file for delete entry, skipping: "{csv_file_path}"')
+                raise LoadError(f'missing file for delete entry, skipping: "{config_file_path}"')
 
             # print(f'personalize_file_name - {deletions=}')
 
@@ -223,15 +223,15 @@ class Personalizer():
 
         elif action.upper() == 'ADD' or action.upper() == 'REPLACE':
             additions = {}
-            if csv_file_path:  # some REPLACE entries may not have filenames, and that's okay
+            if config_file_path:  # some REPLACE entries may not have filenames, and that's okay
                 try:
-                    for row in self._load_count_items_per_row(2, csv_file_path):
+                    for row in self._load_count_items_per_row(2, config_file_path):
                         additions[ row[0] ] = row[1]
                 except ItemCountError:
-                    raise LoadError(f'files containing additions must have just two values per line, skipping entire file: "{csv_file_path}"')
+                    raise LoadError(f'files containing additions must have just two values per line, skipping entire file: "{config_file_path}"')
                     
                 except FileNotFoundError:
-                    raise LoadError(f'missing file for add or replace entry, skipping: "{csv_file_path}"')
+                    raise LoadError(f'missing file for add or replace entry, skipping: "{config_file_path}"')
             
             if action.upper() == 'ADD':
                 value = source.copy()
@@ -260,7 +260,7 @@ class Personalizer():
         if target_contexts and target_config_paths:
             raise ValueError('load_list_personalizations: bad arguments - cannot accept both "target_contexts" and "target_config_paths" at the same time.')
             
-        control_file = self.personal_csv_folder / self.personal_list_control_file_name
+        control_file = self.personal_config_folder / self.personal_list_control_file_name
         
         if self.testing:
             print(f'load_list_personalizations: loading customizations from "{control_file}"...')
@@ -270,13 +270,13 @@ class Personalizer():
             target_config_paths = None
 
         # unwatch all config files until found again in the loop below
-        watched_paths = self._get_watched_paths_for_method(self.update_csv)
+        watched_paths = self._get_watched_paths_for_method(self.reload_config)
         for path in watched_paths:
             if self.is_list_config_file(path):
-                self._unwatch(path, self.update_csv)
+                self._unwatch(path, self.reload_config)
 
         if os.path.exists(control_file):
-            self._watch(control_file, self.update_csv)
+            self._watch(control_file, self.reload_config)
         else:
             # nothing to do, apparently
             return
@@ -288,13 +288,13 @@ class Personalizer():
                 line_number += 1
 
                 # determine the CSV file path, check error cases and establish config file watches
-                csv_file_path = None
+                config_file_path = None
                 if len(remainder):
-                    csv_file_path = self.personal_csv_folder / self.personal_list_folder_name / remainder[0]
-                    if os.path.exists(csv_file_path):
-                        self._watch(csv_file_path, self.update_csv)
+                    config_file_path = self.personal_config_folder / self.personal_list_folder_name / remainder[0]
+                    if os.path.exists(config_file_path):
+                        self._watch(config_file_path, self.reload_config)
                     else:
-                        logging.error(f'load_list_personalizations: file not found for {action.upper()} entry, skipping: "{csv_file_path}"')
+                        logging.error(f'load_list_personalizations: file not found for {action.upper()} entry, skipping: "{config_file_path}"')
                         continue
                 elif action.upper() != 'REPLACE':
                     logging.error(f'load_list_personalizations: missing file name for {action.upper()} entry, skipping: "{target_list}"')
@@ -317,15 +317,15 @@ class Personalizer():
 
                 if target_config_paths:
                     # we are loading some, not all, paths. see if the current path matches our list.
-                    # note: this does the right thing even when csv_file_path is None, which is sometimes the case.
-                    if str(csv_file_path) in target_config_paths:
-                        # print(f'loading {csv_file_path}, because it is in "{target_config_paths}"')
+                    # note: this does the right thing even when config_file_path is None, which is sometimes the case.
+                    if str(config_file_path) in target_config_paths:
+                        # print(f'loading {config_file_path}, because it is in "{target_config_paths}"')
                         
                         # consume the list as we go so at the end we know if we missed any paths
-                        target_config_paths.remove(str(csv_file_path))
+                        target_config_paths.remove(str(config_file_path))
                     else:
                         if self.testing:
-                            print(f'load_list_personalizations: {control_file}, SKIPPING at line {line_number} - {csv_file_path} is NOT in given list of target config paths')
+                            print(f'load_list_personalizations: {control_file}, SKIPPING at line {line_number} - {config_file_path} is NOT in given list of target config paths')
                         continue
 
                 if not target_ctx_path in registry.contexts:
@@ -336,7 +336,7 @@ class Personalizer():
                 list_personalizations = self.get_list_personalizations(target_ctx_path)
                 value = None
                 try:
-                    value = self.load_one_list_context(action, target_list, csv_file_path)
+                    value = self.load_one_list_context(action, target_list, config_file_path)
                 except FilenameError as e:
                     logging.error(f'load_list_personalizations: {control_file}, SKIPPING at line {line_number} - {str(e)}')
                     continue
@@ -393,13 +393,13 @@ class Personalizer():
 
         fs.unwatch(path, method_ref)
 
-    def load_one_command_context(self, action, target_ctx_path, csv_file_name) -> Tuple[Dict, bool, str]:
+    def load_one_command_context(self, action, target_ctx_path, config_file_name) -> Tuple[Dict, bool, str]:
         """Load a single command context."""
         value = {}
         send_add_notification = False
 
-        csv_file_path = os.path.join(self.personal_command_folder_name, csv_file_name)
-        csv_file_path = self.personal_csv_folder / csv_file_name
+        config_file_path = os.path.join(self.personal_command_folder_name, config_file_name)
+        config_file_path = self.personal_config_folder / config_file_name
 
         context = registry.contexts[target_ctx_path]
 
@@ -409,11 +409,11 @@ class Personalizer():
             deletions = []
             try:
                 # load items from source file
-                deletions = self._load_count_items_per_row(1, csv_file_path)
+                deletions = self._load_count_items_per_row(1, config_file_path)
             except ItemCountError:
-                raise LoadError(f'files containing deletions must have just one value per line, skipping entire file: "{csv_file_path}"')
+                raise LoadError(f'files containing deletions must have just one value per line, skipping entire file: "{config_file_path}"')
             except FileNotFoundError:
-                raise LoadError(f'missing file for delete entry, skipping: "{csv_file_path}"')
+                raise LoadError(f'missing file for delete entry, skipping: "{config_file_path}"')
 
             # print(f'personalize_file_name - {deletions=}')
             value = { k: 'skip()' for k in commands.keys() if k in deletions }
@@ -422,7 +422,7 @@ class Personalizer():
             additions = {}
             try:
                 # load items from source file
-                for row in self._load_count_items_per_row(2, csv_file_path):
+                for row in self._load_count_items_per_row(2, config_file_path):
                     target_command = row[0]
                     replacement_command = row[1]
 
@@ -436,9 +436,9 @@ class Personalizer():
                     additions[ target_command ] = 'skip()'
                     additions[ replacement_command ] = impl
             except ItemCountError:
-                raise LoadError(f'files containing additions must have just two values per line, skipping entire file: "{csv_file_name}"')
+                raise LoadError(f'files containing additions must have just two values per line, skipping entire file: "{config_file_name}"')
             except FileNotFoundError:
-                raise LoadError(f'missing file for add or replace entry, skipping: "{csv_file_path}"')
+                raise LoadError(f'missing file for add or replace entry, skipping: "{config_file_path}"')
             
             # capture the additions
             value.update(additions)
@@ -462,7 +462,7 @@ class Personalizer():
         # decide whether or not to send the user a notification before returning
         send_add_notification = False
         
-        control_file = self.personal_csv_folder / self.personal_command_control_file_name
+        control_file = self.personal_config_folder / self.personal_command_control_file_name
 
         if self.testing:
             print(f'load_command_personalizations: loading customizations from "{control_file}"...')
@@ -472,13 +472,13 @@ class Personalizer():
             target_config_paths = None
             
         # unwatch all config files until found again in the loop below
-        watched_paths = self._get_watched_paths_for_method(self.update_csv)
+        watched_paths = self._get_watched_paths_for_method(self.reload_config)
         for path in watched_paths:
             if self.is_command_config_file(path):
-                self._unwatch(path, self.update_csv)
+                self._unwatch(path, self.reload_config)
 
         if os.path.exists(control_file):
-            self._watch(control_file, self.update_csv)
+            self._watch(control_file, self.reload_config)
         else:
             # nothing to do, apparently
             return
@@ -486,20 +486,20 @@ class Personalizer():
         try:
             # loop through the control file and do the needful
             line_number = 0
-            for action, target_ctx_path, csv_file_name in self.get_lines_from_csv(control_file):
+            for action, target_ctx_path, config_file_name in self.get_lines_from_csv(control_file):
                 line_number += 1
 
                 # determine the CSV file path, check error cases and establish config file watches
-                csv_file_path = self.personal_csv_folder / self.personal_command_folder_name / csv_file_name
-                if os.path.exists(csv_file_path):
-                    self._watch(csv_file_path, self.update_csv)
+                config_file_path = self.personal_config_folder / self.personal_command_folder_name / config_file_name
+                if os.path.exists(config_file_path):
+                    self._watch(config_file_path, self.reload_config)
                 else:
-                    logging.error(f'load_command_personalizations: {control_file}, at line {line_number} - file not found for {action.upper()} entry, skipping: "{csv_file_path}"')
+                    logging.error(f'load_command_personalizations: {control_file}, at line {line_number} - file not found for {action.upper()} entry, skipping: "{config_file_path}"')
                     continue
                 
                 if self.testing:
                     # print(f'{control_file}, at line {line_number} - {target, action, remainder}')
-                    print(f'load_command_personalizations: {control_file}, at line {line_number} - {target_ctx_path, action, csv_file_name}')
+                    print(f'load_command_personalizations: {control_file}, at line {line_number} - {target_ctx_path, action, config_file_name}')
 
                 if target_contexts and not target_ctx_path in target_contexts:
                     # current target is not in the list of targets, skip
@@ -508,12 +508,12 @@ class Personalizer():
                     continue
 
                 if target_config_paths:
-                    if csv_file_path in target_config_paths:
+                    if config_file_path in target_config_paths:
                         # consume the list as we go so at the end we know if we missed any paths
-                        target_config_paths.remove(csv_file_path)
+                        target_config_paths.remove(config_file_path)
                     else:
                         if self.testing:
-                            print(f'load_command_personalizations: {control_file}, SKIPPING at line {line_number} - {csv_file_path} is NOT in given list of target config paths')
+                            print(f'load_command_personalizations: {control_file}, SKIPPING at line {line_number} - {config_file_path} is NOT in given list of target config paths')
                         continue
 
                 if not target_ctx_path in registry.contexts:
@@ -524,7 +524,7 @@ class Personalizer():
 
                 value = None
                 try:
-                    value, send_add_notification = self.load_one_command_context(action, target_ctx_path, csv_file_path)
+                    value, send_add_notification = self.load_one_command_context(action, target_ctx_path, config_file_path)
                 except LoadError as e:
                     logging.error(f'load_command_personalizations: {control_file}, at line {line_number} - {str(e)}')
                     continue
@@ -798,7 +798,7 @@ class Personalizer():
         
         path = Path(path_string)
         
-        if not self.personal_csv_folder in path.parents:
+        if not self.personal_config_folder in path.parents:
             raise Exception(f'get_lines_from_csv: file must be in the config folder, "self.personal_csv_folder", skipping: {path}')
 
         if not path.suffix == ".csv":
@@ -830,7 +830,7 @@ class Personalizer():
     
     def get_config_category(self, path):
         """Return parent directory name of given path relative to the personalization configuration folder, e.g. list_personalization"""
-        temp = os.path.relpath(path, self.personal_csv_folder)
+        temp = os.path.relpath(path, self.personal_config_folder)
         temp = temp.split(os.path.sep)
 
         category = None
@@ -861,14 +861,14 @@ class Personalizer():
         else:
             self.unload_personalizations(target_paths = [path])
             
-    def update_csv(self, path: str, flags: Any) -> None:
+    def reload_config(self, path: str, flags: Any) -> None:
         """Callback method for updating personalized contexts after changes to personalization configuration files."""
         if self.testing:
-            print(f'update_csv: starting - {path, flags}')
+            print(f'reload_config: starting - {path, flags}')
 
-            # watched_paths = self._get_watched_paths_for_method(self.update_csv)
+            # watched_paths = self._get_watched_paths_for_method(self.reload_config)
             # matching_paths = [p for p in watched_paths if p == path]
-            # print(f'update_csv: TESTING: {len(watched_paths), len(matching_paths)}')
+            # print(f'reload_config: TESTING: {len(watched_paths), len(matching_paths)}')
 
         reload = flags.exists
         if reload:
