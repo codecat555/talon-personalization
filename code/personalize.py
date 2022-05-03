@@ -196,8 +196,9 @@ class Personalizer():
         try:
             # WIP - need to review this, is it correct?
             if target_list in self.ctx.lists.keys():
-                print(f'WE DO ACTUALLY GET HERE SOMETIMES')
-                source = self.ctx.lists[target_list]
+                # print(f'WE DO ACTUALLY GET HERE SOMETIMES')
+                # source = self.ctx.lists[target_list]
+                raise Exception(f'load_one_list_context: not overwriting in-memory list')
             else:
                 source = registry.lists[target_list][0]
         except KeyError as e:
@@ -302,7 +303,7 @@ class Personalizer():
                 if target_contexts:
                     # we are loading some, not all, contexts. see if the current target matches given list.
                     for ctx_path in target_contexts:
-                        # WIP - find a better way than hard coding 'user.' here
+                        # this will need to change if we ever want to override any context other than 'user'.
                         if target_ctx_path.startswith('user.' + ctx_path):
                             break
                     else:
@@ -331,7 +332,6 @@ class Personalizer():
                     logging.error(f'load_list_personalizations: cannot redefine a context that does not exist, skipping: "{target_ctx_path}"')
                     continue
                 
-                # WIP - should make self.personalizations a property and clean this up
                 # load the target context
                 list_personalizations = self.get_list_personalizations(target_ctx_path)
                 value = None
@@ -541,10 +541,9 @@ class Personalizer():
             logging.warning(f'load_command_personalizations: setting "{self.setting_enable_personalization.path}" is enabled, but personalization config file does not exist: "{e.filename}"')
 
         if target_config_paths:
-            # WIP - need to check the case where a config path has been deleted
             logging.error(f'load_command_personalizations: failed to process some targeted config paths: "{target_config_paths}"')
 
-        # WIP - review this, repeated notifications will be annoying if there are many file updates
+        # repeated notifications are annoying, the user can just fix their config file to make them stop.
         if send_add_notification:
             app.notify(
                 title=self.command_add_disallowed_title,
@@ -639,9 +638,10 @@ class Personalizer():
 
         # WIP - verify if this check is really necessary
         if file_path in self.personalized_files:
-            # append to existing
-            print(f'update_one_file: APPEND TO EXISTING - {ctx_path=}, {file_path=}')
-            open_mode = 'a'
+            # # append to existing
+            # print(f'update_one_file: APPEND TO EXISTING - {ctx_path=}, {file_path=}')
+            # open_mode = 'a'
+            raise Exception(f'write_one_file: not overwriting existing file: {file_path}')
         else:
             # truncate on open, if the file actually exists
             open_mode = 'w'
@@ -760,7 +760,7 @@ class Personalizer():
         return filepath_prefix
 
     def get_personalizations(self, context_path: str) -> Dict:
-        """WIP"""
+        """Return personalizations for given context path"""
         if not context_path in self.personalizations:
             self.personalizations[context_path] = {}
 
@@ -776,7 +776,7 @@ class Personalizer():
         return context_personalizations['source_context']
         
     def get_list_personalizations(self, context_path: str) -> Dict:
-        """WIP"""
+        """Return list personalizations for given context path"""
         context_personalizations = self.get_personalizations(context_path)
 
         if not 'lists' in context_personalizations:
@@ -785,7 +785,7 @@ class Personalizer():
         return context_personalizations['lists']
 
     def get_command_personalizations(self, context_path: str) -> Dict:
-        """WIP"""
+        """Returned command personalizations for given context path"""
         context_personalizations = self.get_personalizations(context_path)
 
         if not 'commands' in context_personalizations:
