@@ -130,7 +130,7 @@ class Personalizer():
     #     print(f'__del__: UNLOADING PERSONALIZATIONS ON OBJECT DESTRUCTION')
     #     self.unload_personalizations()
     
-    def refresh_settings(self, target_ctx_path: str, new_value: Any) -> None:
+    def _refresh_settings(self, target_ctx_path: str, new_value: Any) -> None:
         """Callback for handling Talon settings changes"""
         # print(f'refresh_settings: {target_ctx_path=}, {new_value=}')
         if target_ctx_path == self.enable_setting.path:
@@ -147,17 +147,17 @@ class Personalizer():
         with self.personalization_mutex:
             if target_paths:
                 for file_path in target_paths:
-                    ctx_path = self.get_context_from_path(file_path)
+                    ctx_path = self._get_context_from_path(file_path)
                     if not ctx_path in self.personalizations:
                         raise Exception('unload_command_personalizations: no known context with path "{ctx_path}"')
                     
-                    self._unwatch(file_path, self.update_personalizations)
+                    self._unwatch(file_path, self._update_personalizations)
                     self._purge_files(ctx_path)
             else:
                 self._unwatch_all(self.unload_personalizations)
                 self._purge_files()
 
-    def _unwatch_all(self, method_ref):
+    def _unwatch_all(self, method_ref: Callable) -> None:
         """Internal method to stop watching all watched files associated with given method reference."""
         watched_paths = self._get_watched_paths_for_method(method_ref)
         for p in watched_paths:
@@ -174,7 +174,7 @@ class Personalizer():
 
                 os.remove(personal_path)
                 
-                ctx_path = self.get_context_from_path(path)
+                ctx_path = self._get_context_from_path(path)
                 del self.personalized_files[ctx_path]
             else:
                 if os.path.exists(self.personal_folder_path):
@@ -194,7 +194,7 @@ class Personalizer():
                 self.unload_personalizations()
                 return
    
-    def load_one_list_context(self, action, target_ctx_path, target_list, config_file_path) -> Dict:
+    def load_one_list_context(self, action: str, target_ctx_path: str, target_list: List[str], config_file_path: str) -> Dict[str, str]:
         """Load a single list context."""
         
         try:
@@ -218,7 +218,7 @@ class Personalizer():
             except FileNotFoundError:
                 raise LoadError(f'missing file for delete entry, skipping: "{config_file_path}"')
 
-            # print(f'personalize_file_name - {deletions=}')
+            # print(f'load_one_list_context: {deletions=}')
 
             value = source.copy()
             value = { k:v for k,v in source.items() if k not in deletions }
@@ -238,7 +238,7 @@ class Personalizer():
             if action.upper() == 'ADD':
                 value = source.copy()
                 
-            # print(f'personalize_file_name - {additions=}')
+            # print(f'load_one_list_context: {additions=}')
             
             value.update(additions)
         else:
@@ -246,10 +246,10 @@ class Personalizer():
 
         return value
         
-    def _load_count_items_per_row(self, items_per_row: int, file_path: Path) -> List:
+    def _load_count_items_per_row(self, items_per_row: int, file_path: Path) -> List[List[str]]:
         """Internal method to read a CSV file expected to have a fixed number of items per row."""
         items = []
-        for row in self.get_lines_from_csv(file_path):
+        for row in self._get_config_lines(file_path):
             if len(row) > items_per_row:
                 raise ItemCountError()
             items.append(row)
@@ -272,13 +272,13 @@ class Personalizer():
             target_config_paths = None
 
         # unwatch all config files until found again in the loop below
-        watched_paths = self._get_watched_paths_for_method(self.update_config)
+        watched_paths = self._get_watched_paths_for_method(self._update_config)
         for path in watched_paths:
-            if self.is_list_config_file(path):
-                self._unwatch(path, self.update_config)
+            if self._is_list_config_file(path):
+                self._unwatch(path, self._update_config)
 
         if os.path.exists(control_file):
-            self._watch(control_file, self.update_config)
+            self._watch(control_file, self._update_config)
         else:
             # nothing to do, apparently
             return
@@ -286,17 +286,17 @@ class Personalizer():
         try:
             # loop through the control file and do the needful
             line_number = 0
-            for action, source_file_path, target_list, *remainder in self.get_lines_from_csv(control_file, escapechar=None):
+            for action, source_file_path, target_list, *remainder in self._get_config_lines(control_file, escapechar=None):
                 line_number += 1
 
-                target_ctx_path = self.get_context_from_path(source_file_path)
+                target_ctx_path = self._get_context_from_path(source_file_path)
 
                 # determine the CSV file path, check error cases and establish config file watches
                 config_file_path = None
                 if len(remainder):
                     config_file_path = self.personal_config_folder / self.personal_list_folder_name / remainder[0]
                     if os.path.exists(config_file_path):
-                        self._watch(config_file_path, self.update_config)
+                        self._watch(config_file_path, self._update_config)
                     else:
                         logging.error(f'load_list_personalizations: file not found for {action.upper()} entry, skipping: "{config_file_path}"')
                         continue
@@ -323,7 +323,7 @@ class Personalizer():
                     # we are loading some, not all, paths. see if the current path matches our list.
                     # note: this does the right thing even when config_file_path is None, which is sometimes the case.
                     if str(config_file_path) in target_config_paths:
-                        # print(f'loading {config_file_path}, because it is in "{target_config_paths}"')
+                        # print(f'load_list_personalizations: loading {config_file_path}, because it is in "{target_config_paths}"')
                         
                         # consume the list as we go so at the end we know if we missed any paths
                         target_config_paths.remove(str(config_file_path))
@@ -354,19 +354,19 @@ class Personalizer():
                 list_personalizations.update({target_list: value})
 
                 # make sure we are monitoring the source file for changes
-                self._watch_source_file_for_context(target_ctx_path, self.update_personalizations)
+                self._watch_source_file_for_context(target_ctx_path, self._update_personalizations)
         
         except FileNotFoundError as e:
             # below check is necessary because the inner try blocks above do not catch this error
             # completely...something's odd about the way talon is handling these exceptions.
             logging.warning(f'load_list_personalizations: setting "{self.setting_enable_personalization.path}" is enabled, but personalization config file does not exist: "{e.filename}"')
 
-    def _watch_source_file_for_context(self, ctx_path, method_ref):
+    def _watch_source_file_for_context(self, ctx_path: str, method_ref: Callable) -> None:
         """Internal method to watch the file associated with a given context."""
-        watch_path = self.get_fs_path_for_context(ctx_path)
+        watch_path = self._get_fs_path_for_context(ctx_path)
         self._watch(watch_path, method_ref)
 
-    def get_fs_path_for_context(self, ctx_path):
+    def _get_fs_path_for_context(self, ctx_path: str) -> None:
         """Convert given Talon context path into the equivalent filesystem path."""
         path_prefix, filename = self._split_context_to_user_path_and_file_name(ctx_path)
         path = os.path.join(actions.path.talon_user(), path_prefix, filename)
@@ -376,7 +376,7 @@ class Personalizer():
 
         return path
 
-    def _get_short_path(self, path):
+    def _get_short_path(self, path: str) -> str:
         short_path = Path(path)
         if short_path.is_relative_to(self.personal_config_folder):
             short_path = short_path.relative_to(self.personal_config_folder)
@@ -384,33 +384,33 @@ class Personalizer():
             short_path = short_path.relative_to(actions.path.talon_user())
         return str(short_path)
 
-    def _watch(self, path, method_ref):
+    def _watch(self, path: str, method_ref: Callable) -> None:
         """Internal wrapper method to set a file watch."""
 
         watched_paths = self._get_watched_paths_for_method(method_ref)
         if path not in watched_paths:
             # if self.testing:
-            #     # print(f'watch: {path=} {method_ref=}')
+            #     # print(f'_watch: {path=} {method_ref=}')
             #     short_path = self._get_short_path(path)
                 
             #     method_name = str(method_ref)
             #     if hasattr(method_ref, '__name__'):
             #         method_name = method_ref.__name__
-            #     print(f'watch: {method_name}, {short_path}')
+            #     print(f'_watch: {method_name}, {short_path}')
 
             fs.watch(path, method_ref)
 
-    def _unwatch(self, path, method_ref):
+    def _unwatch(self, path: str, method_ref: Callable) -> None:
         """Internal wrapper method to clear (unset) a file watch."""
         
         # if self.testing:
-        #     # print(f'watch: {path=} {method_ref=}')
+        #     # print(f'_unwatch: {path=} {method_ref=}')
         #     short_path = self._get_short_path(path)
             
         #     method_name = str(method_ref)
         #     if hasattr(method_ref, '__name__'):
         #         method_name = method_ref.__name__
-        #     print(f'unwatch: {method_name}, {short_path}')
+        #     print(f'_unwatch: {method_name}, {short_path}')
 
         fs.unwatch(path, method_ref)
 
@@ -443,7 +443,7 @@ class Personalizer():
             except FileNotFoundError:
                 raise LoadError(f'missing file for delete entry, skipping: "{config_file_path}"')
 
-            print(f'load_one_command_context: {deletions=}')
+            # print(f'load_one_command_context: {deletions=}')
             for row in deletions:
                 k = row[0]
                 commands[k] = 'skip()'
@@ -472,7 +472,7 @@ class Personalizer():
         else:
             raise LoadError(f'unknown action, skipping: "{action}"')
 
-        # print(f'load_command_personalizations: AFTER {action.upper()}, {commands=}')
+        # print(f'load_one_command_context: AFTER {action.upper()}, {commands=}')
         
         return commands
 
@@ -492,13 +492,13 @@ class Personalizer():
             target_config_paths = None
             
         # unwatch all config files until found again in the loop below
-        watched_paths = self._get_watched_paths_for_method(self.update_config)
+        watched_paths = self._get_watched_paths_for_method(self._update_config)
         for path in watched_paths:
-            if self.is_command_config_file(path):
-                self._unwatch(path, self.update_config)
+            if self._is_command_config_file(path):
+                self._unwatch(path, self._update_config)
 
         if os.path.exists(control_file):
-            self._watch(control_file, self.update_config)
+            self._watch(control_file, self._update_config)
         else:
             # nothing to do, apparently
             return
@@ -506,21 +506,20 @@ class Personalizer():
         try:
             # loop through the control file and do the needful
             line_number = 0
-            for action, source_file_path, config_file_name in self.get_lines_from_csv(control_file, escapechar=None):
+            for action, source_file_path, config_file_name in self._get_config_lines(control_file, escapechar=None):
                 line_number += 1
 
-                target_ctx_path = self.get_context_from_path(source_file_path)
+                target_ctx_path = self._get_context_from_path(source_file_path)
 
                 # determine the CSV file path, check error cases and establish config file watches
                 config_file_path = self.personal_config_folder / self.personal_command_folder_name / config_file_name
                 if os.path.exists(config_file_path):
-                    self._watch(config_file_path, self.update_config)
+                    self._watch(config_file_path, self._update_config)
                 else:
                     logging.error(f'load_command_personalizations: {control_file}, at line {line_number} - file not found for {action.upper()} entry, skipping: "{config_file_path}"')
                     continue
                 
                 if self.testing:
-                    # print(f'{control_file}, at line {line_number} - {target, action, remainder}')
                     print(f'load_command_personalizations: at line {line_number} - {target_ctx_path, action, config_file_name}')
 
                 if target_contexts and not target_ctx_path in target_contexts:
@@ -553,7 +552,7 @@ class Personalizer():
 
                 command_personalizations.update(value)
 
-                self._watch_source_file_for_context(target_ctx_path, self.update_personalizations)
+                self._watch_source_file_for_context(target_ctx_path, self._update_personalizations)
 
         except (FilenameError, LoadError) as e:
             logging.error(f'load_command_personalizations: {control_file}, at line {line_number} - {str(e)}')
@@ -623,7 +622,7 @@ class Personalizer():
         
     def _write_talon_tag_calls(self, f, context_path: str) -> None:
         """Internal method for writing tag calls to .talon file."""
-        for line in self.get_tag_calls(context_path):
+        for line in self._get_tag_calls(context_path):
             print(line, file=f, end='')
         print(file=f)
 
@@ -645,12 +644,12 @@ class Personalizer():
             filepath_prefix = self.get_personal_filepath_prefix(ctx_path)
             # print(f'generate_files: {filepath_prefix=}')
             
-            source_match_string = self.get_source_match_string(ctx_path)
+            source_match_string = self._get_source_match_string(ctx_path)
             # print(f'generate_files: {source_match_string=}')
             
             self.write_one_file(ctx_path, filepath_prefix, source_match_string)
 
-    def write_one_file(self, ctx_path, file_path, source_match_string):
+    def write_one_file(self, ctx_path: str, file_path: str, source_match_string: str) -> None:
         """Generate one personalized file"""
         new_match_string = self._add_tag_to_match_string(ctx_path, source_match_string)
 
@@ -701,7 +700,7 @@ class Personalizer():
                 for list_name, list_value in list_personalizations.items():
                     print(f'ctx.lists["{list_name}"] = {pp.pformat(list_value)}\n', file=f)
 
-    def get_source_match_string(self, context_path: str) -> str:
+    def _get_source_match_string(self, context_path: str) -> str:
         """Return context match string for given context."""
         source_match_string = None
 
@@ -713,7 +712,7 @@ class Personalizer():
             
         return source_match_string
     
-    def get_tag_calls(self, context_path: str) -> List[str]:
+    def _get_tag_calls(self, context_path: str) -> List[str]:
         """Return tag calls for given context."""
         tag_calls = None
         context_personalizations = self.get_personalizations(context_path)
@@ -731,7 +730,7 @@ class Personalizer():
             # need to grab match string from the file
             source_match_string, tag_calls = self._parse_talon_file(context_path)
         else:
-            context = self.get_source_context(context_path)
+            context = self._get_source_context(context_path)
             source_match_string = context.matches
 
         context_personalizations = self.get_personalizations(context_path)
@@ -784,7 +783,7 @@ class Personalizer():
 
         return self.personalizations[context_path]
 
-    def get_source_context(self, context_path: str) -> Dict:
+    def _get_source_context(self, context_path: str) -> Dict:
         """Return Talon context reference for given context path."""
         context_personalizations = self.get_personalizations(context_path)
 
@@ -811,7 +810,12 @@ class Personalizer():
             
         return context_personalizations['commands']
 
-    def get_lines_from_csv(self, path_string: str, escapechar: str ='\\') -> List[str]:
+    def _get_config_lines(self, path_string: str, escapechar: str ='\\') -> List[str]:
+        """Retrieves contents of config file in personalization config folder."""
+        
+        return self._get_lines_from_csv(path_string, escapechar)
+        
+    def _get_lines_from_csv(self, path_string: str, escapechar: str ='\\') -> List[str]:
         """Retrieves contents of CSV file in personalization config folder."""
         
         path = Path(path_string)
@@ -829,7 +833,7 @@ class Personalizer():
         # print(f'get_lines_from_csv: returning {rows}')
         return rows
 
-    def get_context_from_path(self, path: str):
+    def _get_context_from_path(self, path: str) -> str:
         """Returns Talon context path corresponding to given talon user folder path."""
         path = Path(path)
         if path.is_absolute():
@@ -850,15 +854,15 @@ class Personalizer():
         # this will need to change if we ever want to override any context not under 'user.'.
         return 'user.' + ctx_path
 
-    def is_list_config_file(self, path):
+    def _is_list_config_file(self, path: str) -> bool:
         """Checks whether given path is under the list personalization config folder."""
-        return Path.is_file(Path(path)) and self.personal_list_folder_name == self.get_config_category(path)
+        return Path.is_file(Path(path)) and self.personal_list_folder_name == self._get_config_category(path)
     
-    def is_command_config_file(self, path):
+    def _is_command_config_file(self, path: str) -> bool:
         """Checks whether given path is under the command personalization config folder."""
-        return Path.is_file(Path(path)) and self.personal_command_folder_name == self.get_config_category(path)
+        return Path.is_file(Path(path)) and self.personal_command_folder_name == self._get_config_category(path)
     
-    def get_config_category(self, path):
+    def _get_config_category(self, path: str) -> str:
         """Return parent directory name of given path relative to the personalization configuration folder, e.g. list_personalization"""
         temp = os.path.relpath(path, self.personal_config_folder)
         temp = temp.split(os.path.sep)
@@ -871,7 +875,7 @@ class Personalizer():
         # print(f'get_config_category: returning {category}')
         return category
 
-    def update_personalizations(self, path: str, flags: Any) -> None:
+    def _update_personalizations(self, path: str, flags: Any) -> None:
         """Callback method for updating personalized contexts after changes to associated source files."""
         
         if self.testing:
@@ -879,8 +883,8 @@ class Personalizer():
             
         reload = flags.exists
         if reload:
-            if self.is_modified(path):
-                ctx_path = self.get_context_from_path(path)
+            if self._is_modified(path):
+                ctx_path = self._get_context_from_path(path)
 
                 if self.testing:
                     print(f'update_personalizations: {ctx_path=}')
@@ -892,7 +896,7 @@ class Personalizer():
         else:
             self.unload_personalizations(target_paths = [path])
 
-    def is_modified(self, path):
+    def _is_modified(self, path: str) -> bool:
         mtime = os.stat(path).st_mtime
         if path in self._updated_paths:
             if mtime == self._updated_paths[path]:
@@ -900,27 +904,27 @@ class Personalizer():
         self._updated_paths[path] = mtime
         return True
             
-    def update_config(self, path: str, flags: Any) -> None:
+    def _update_config(self, path: str, flags: Any) -> None:
         """Callback method for updating personalized contexts after changes to personalization configuration files."""
         if self.testing:
             print(f'update_config: starting - {path, flags}')
 
         reload = flags.exists
         if reload:
-            if self.is_modified(path):
-                if self.is_list_config_file(path):
+            if self._is_modified(path):
+                if self._is_list_config_file(path):
                     self.load_list_personalizations(target_config_paths = [path])
-                elif self.is_command_config_file(path):
+                elif self._is_command_config_file(path):
                     self.load_command_personalizations(target_config_paths = [path])
                 else:
                     raise Exception(f'update_personalizations: unrecognized file: {path}')
                     
-                ctx_path = self.get_context_from_path(path)
+                ctx_path = self._get_context_from_path(path)
                 self.generate_files(target_contexts=[ctx_path])
         else:
             self.unload_personalizations(target_paths = [path])
 
-    def _get_watched_paths_for_method(self, method: Callable):
+    def _get_watched_paths_for_method(self, method: Callable) -> List[str]:
         """Internal method returning list of watched paths associated with given callback method."""
         path_to_callback_map = dict({k: v[0][0] for k,v in fs.tree.walk()})
         paths = [k for k,v in path_to_callback_map.items() if v == method]
@@ -932,7 +936,7 @@ def on_ready() -> None:
     personalizer.load_personalizations()
 
     # catch updates
-    settings.register("", personalizer.refresh_settings)
+    settings.register("", personalizer._refresh_settings)
         
 personalizer = Personalizer()
 
