@@ -103,9 +103,9 @@ class Personalizer():
         self.personal_command_folder_name = 'command_personalization'
         self.personal_command_control_file_name = os.path.join(self.personal_command_folder_name, self.control_file_name)
         
-        # text for notifying user of a configuration error
-        self.command_add_disallowed_title = "Talon - ADD not allowed for commands"
-        self.command_add_disallowed_notice = 'Command personalization: to add new commands, use a .talon file.'
+        # # text for notifying user of a configuration error
+        # self.command_add_disallowed_title = "Talon - ADD not allowed for commands"
+        # self.command_add_disallowed_notice = 'Command personalization: to add new commands, use a .talon file.'
         
         # self.deleted_context_title = "Talon - personalization source file disappeared"
         # self.deleted_context_notice = 'Personalization: personalizations have been invalidated because the source file has disappeared.'
@@ -194,15 +194,13 @@ class Personalizer():
                 self.unload_personalizations()
                 return
    
-    def load_one_list_context(self, action, target_list, config_file_path) -> Dict:
+    def load_one_list_context(self, action, target_ctx_path, target_list, config_file_path) -> Dict:
         """Load a single list context."""
         
         try:
-            # WIP - need to review this, is it correct?
-            if target_list in self.ctx.lists.keys():
-                # print(f'WE DO ACTUALLY GET HERE SOMETIMES')
-                # source = self.ctx.lists[target_list]
-                raise Exception(f'load_one_list_context: not overwriting in-memory list')
+            list_personalizations = self.get_list_personalizations(target_ctx_path)
+            if target_list in list_personalizations:
+                source = list_personalizations[target_list]
             else:
                 source = registry.lists[target_list][0]
         except KeyError as e:
@@ -342,7 +340,7 @@ class Personalizer():
                 list_personalizations = self.get_list_personalizations(target_ctx_path)
                 value = None
                 try:
-                    value = self.load_one_list_context(action, target_list, config_file_path)
+                    value = self.load_one_list_context(action, target_ctx_path, target_list, config_file_path)
                 except FilenameError as e:
                     logging.error(f'load_list_personalizations: {control_file}, SKIPPING at line {line_number} - {str(e)}')
                     continue
@@ -391,42 +389,49 @@ class Personalizer():
 
         watched_paths = self._get_watched_paths_for_method(method_ref)
         if path not in watched_paths:
-            if self.testing:
-                # print(f'watch: {path=} {method_ref=}')
-                short_path = self._get_short_path(path)
+            # if self.testing:
+            #     # print(f'watch: {path=} {method_ref=}')
+            #     short_path = self._get_short_path(path)
                 
-                method_name = str(method_ref)
-                if hasattr(method_ref, '__name__'):
-                    method_name = method_ref.__name__
-                print(f'watch: {method_name}, {short_path}')
+            #     method_name = str(method_ref)
+            #     if hasattr(method_ref, '__name__'):
+            #         method_name = method_ref.__name__
+            #     print(f'watch: {method_name}, {short_path}')
 
             fs.watch(path, method_ref)
 
     def _unwatch(self, path, method_ref):
         """Internal wrapper method to clear (unset) a file watch."""
         
-        if self.testing:
-            # print(f'watch: {path=} {method_ref=}')
-            short_path = self._get_short_path(path)
+        # if self.testing:
+        #     # print(f'watch: {path=} {method_ref=}')
+        #     short_path = self._get_short_path(path)
             
-            method_name = str(method_ref)
-            if hasattr(method_ref, '__name__'):
-                method_name = method_ref.__name__
-            print(f'unwatch: {method_name}, {short_path}')
+        #     method_name = str(method_ref)
+        #     if hasattr(method_ref, '__name__'):
+        #         method_name = method_ref.__name__
+        #     print(f'unwatch: {method_name}, {short_path}')
 
         fs.unwatch(path, method_ref)
 
     def load_one_command_context(self, action, target_ctx_path, config_file_name) -> Tuple[Dict, bool, str]:
         """Load a single command context."""
-        value = {}
-        send_add_notification = False
 
         config_file_path = os.path.join(self.personal_command_folder_name, config_file_name)
         config_file_path = self.personal_config_folder / config_file_name
 
-        context = registry.contexts[target_ctx_path]
-
-        commands = context.commands
+        try:
+            command_personalizations = self.get_command_personalizations(target_ctx_path)
+            if len(command_personalizations) > 0:
+                # print(f'load_one_command_context: USING INTERNAL COMMAND SET')
+                commands = command_personalizations
+            else:
+                # print(f'load_one_command_context: USING REGISTRY COMMAND SET')
+                # need to copy this way to avoid KeyErrors in current Talon versions
+                commands = {v.rule.rule:v.target.code for k,v in registry.contexts[target_ctx_path].commands.items()}
+        except KeyError as e:
+            raise LoadError(f'cannot redefine a command context that does not exist, skipping: "{target_ctx_path}"')
+        print(f'load_one_command_context: {commands=}')
 
         if action.upper() == 'DELETE':
             deletions = []
@@ -438,11 +443,12 @@ class Personalizer():
             except FileNotFoundError:
                 raise LoadError(f'missing file for delete entry, skipping: "{config_file_path}"')
 
-            # print(f'personalize_file_name - {deletions=}')
-            value = { k: 'skip()' for k in commands.keys() if k in deletions }
+            print(f'load_one_command_context: {deletions=}')
+            for row in deletions:
+                k = row[0]
+                commands[k] = 'skip()'
             
         elif action.upper() == 'REPLACE':
-            additions = {}
             try:
                 # load items from source file
                 for row in self._load_count_items_per_row(2, config_file_path):
@@ -451,30 +457,24 @@ class Personalizer():
 
                     try:
                         # fetch the command implementation from Talon
-                        impl = commands[f'{target_command}'].target.code
+                        impl = registry.contexts[target_ctx_path].commands[target_command].target.code
                     except KeyError as e:
                         raise LoadError(f'cannot replace a command that does not exist, skipping: "{target_command}"')
                     
                     # accumulate values
-                    additions[ target_command ] = 'skip()'
-                    additions[ replacement_command ] = impl
+                    commands[ target_command ] = 'skip()'
+                    commands[ replacement_command ] = impl
             except ItemCountError:
                 raise LoadError(f'files containing additions must have just two values per line, skipping entire file: "{config_file_name}"')
             except FileNotFoundError:
                 raise LoadError(f'missing file for add or replace entry, skipping: "{config_file_path}"')
             
-            # capture the additions
-            value.update(additions)
         else:
-            if action.upper() == 'ADD':
-                # to add new commands, the user should use a .talon file
-                send_add_notification = True
-                
             raise LoadError(f'unknown action, skipping: "{action}"')
 
-        # print(f'load_command_personalizations: AFTER {action.upper()}, {value=}')
+        # print(f'load_command_personalizations: AFTER {action.upper()}, {commands=}')
         
-        return value, send_add_notification
+        return commands
 
     def load_command_personalizations(self, target_contexts: List[str] = [], target_config_paths: List[str] = []) -> None:
         """Load some (or all) defined command personalizations."""
@@ -482,9 +482,6 @@ class Personalizer():
         if target_contexts and target_config_paths:
             raise ValueError('load_command_personalizations: bad arguments - cannot accept both "target_contexts" and "target_config_paths" at the same time.')
 
-        # decide whether or not to send the user a notification before returning
-        send_add_notification = False
-        
         control_file = self.personal_config_folder / self.personal_command_control_file_name
 
         if self.testing:
@@ -549,7 +546,7 @@ class Personalizer():
 
                 value = None
                 try:
-                    value, send_add_notification = self.load_one_command_context(action, target_ctx_path, config_file_path)
+                    value = self.load_one_command_context(action, target_ctx_path, config_file_path)
                 except LoadError as e:
                     logging.error(f'load_command_personalizations: {control_file}, at line {line_number} - {str(e)}')
                     continue
@@ -558,22 +555,15 @@ class Personalizer():
 
                 self._watch_source_file_for_context(target_ctx_path, self.update_personalizations)
 
-        except FilenameError as e:
+        except (FilenameError, LoadError) as e:
             logging.error(f'load_command_personalizations: {control_file}, at line {line_number} - {str(e)}')
         except FileNotFoundError as e:
             # this block is necessary because the inner try blocks above do not catch this error
             # completely ...something's odd about the way talon is handling these exceptions.
             logging.warning(f'load_command_personalizations: setting "{self.setting_enable_personalization.path}" is enabled, but personalization config file does not exist: "{e.filename}"')
-
+            
         if target_config_paths:
             logging.error(f'load_command_personalizations: failed to process some targeted config paths: "{target_config_paths}"')
-
-        # repeated notifications are annoying, the user can just fix their config file to make them stop.
-        if send_add_notification:
-            app.notify(
-                title=self.command_add_disallowed_title,
-                body=self.command_add_disallowed_notice
-            )
 
     def _add_tag_to_match_string(self, context_path: str, old_match_string: str, tag: str = None) -> str:
         """Internal function to add personalization tag to given match string."""
@@ -637,7 +627,7 @@ class Personalizer():
             print(line, file=f, end='')
         print(file=f)
 
-    def generate_files(self) -> None:
+    def generate_files(self, target_contexts: List[str] = None) -> None:
         """Generate personalization files from current metadata."""
         if self.testing:
             print(f'generate_files: writing customizations to "{self.personal_folder_path}"...')
@@ -646,7 +636,10 @@ class Personalizer():
 
         # print(f'generate_files: HERE "{self.personalizations}"')
             
-        for ctx_path in self.personalizations:
+        if not target_contexts:
+            target_contexts = self.personalizations.keys()
+            
+        for ctx_path in target_contexts:
             # print(f'generate_files: {ctx_path=}')
 
             filepath_prefix = self.get_personal_filepath_prefix(ctx_path)
@@ -910,11 +903,7 @@ class Personalizer():
     def update_config(self, path: str, flags: Any) -> None:
         """Callback method for updating personalized contexts after changes to personalization configuration files."""
         if self.testing:
-            print(f'reload_config: starting - {path, flags}')
-
-            # watched_paths = self._get_watched_paths_for_method(self.reload_config)
-            # matching_paths = [p for p in watched_paths if p == path]
-            # print(f'reload_config: TESTING: {len(watched_paths), len(matching_paths)}')
+            print(f'update_config: starting - {path, flags}')
 
         reload = flags.exists
         if reload:
@@ -925,6 +914,9 @@ class Personalizer():
                     self.load_command_personalizations(target_config_paths = [path])
                 else:
                     raise Exception(f'update_personalizations: unrecognized file: {path}')
+                    
+                ctx_path = self.get_context_from_path(path)
+                self.generate_files(target_contexts=[ctx_path])
         else:
             self.unload_personalizations(target_paths = [path])
 
