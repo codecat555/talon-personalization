@@ -92,7 +92,7 @@ class Personalizer():
         self.personal_folder_path = Path(__file__).parents[1] / self.personal_folder_name
         
         # where config files are stored
-        self.personal_config_folder_name = 'csv'
+        self.personal_config_folder_name = 'config'
         self.personal_config_folder = Path(__file__).parents[1] / self.personal_config_folder_name
 
         # config sub folder for list personalizations
