@@ -702,7 +702,7 @@ class Personalizer():
 
     def _get_source_match_string(self, context_path: str) -> str:
         """Return context match string for given context."""
-        source_match_string = None
+        # source_match_string = None
 
         context_personalizations = self.get_personalizations(context_path)
         if 'source_context_match_string' in context_personalizations:
@@ -737,12 +737,16 @@ class Personalizer():
         context_personalizations['source_context_match_string'] = source_match_string
         context_personalizations['tag_calls'] = tag_calls
         
+        print(f'_load_matches_and_tags: returning {source_match_string=}, {tag_calls=}')
+
         return source_match_string, tag_calls
 
-    def _parse_talon_file(self, context_path: str) -> Union[str, List[str]]:
+    def _parse_talon_file(self, ctx_path: str) -> Union[str, List[str]]:
         """Internal method to extract match string and tags from the source file for a given context."""
-        path_prefix, filename = self._split_context_to_user_path_and_file_name(context_path)
+        path_prefix, filename = self._split_context_to_user_path_and_file_name(ctx_path)
         filepath_prefix = os.path.join(actions.path.talon_user(), path_prefix, filename)
+        
+        # print(f'_parse_talon_file: for {ctx_path}, file is {filepath_prefix}')
         
         source_match_string = ''
         tag_calls = []
@@ -756,13 +760,16 @@ class Personalizer():
                 else:
                     if line.startswith('-'):
                         seen_dash = True
-                    if line.lstrip().startswith('#'):
+                    elif line.lstrip().startswith('#'):
                         continue
                     else:
+                        # print(f'_parse_talon_file: found context match line: {line}')
                         source_match_string += line
-            else:
+            if not seen_dash:
                 # never found a '-' => no context header for this file
                 source_match_string = ''
+        
+        # print(f'_parse_talon_file: for {ctx_path}, returning {source_match_string=}, {tag_calls=}')
         
         return source_match_string, tag_calls
 
