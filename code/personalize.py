@@ -157,33 +157,26 @@ class Personalizer():
         def __init__(self, ctx_path: str):
             super().__init__(ctx_path)
 
-            self.commands = {}
+            # self.commands = {}
+            # need to copy this way to avoid KeyErrors (in current Talon versions)
+            self.commands = {v.rule.rule:v.target.code for k,v in registry.contexts[self.ctx_path].commands.items()}
         
-        def get_commands(self):
-            if self.commands is None:
-                # need to copy this way to avoid KeyErrors in current Talon versions
-                self.commands = {v.rule.rule:v.target.code for k,v in registry.contexts[self.ctx_path].commands.items()}
-
-            return self.commands
-
         # WIP - maybe rename as 'mask'
         def remove(self, command_key: str):
-            commands = self.get_commands()
             try:
                 # del commands[command_key]
-                commands[command_key] = 'skip()'
+                self.commands[command_key] = 'skip()'
             except KeyError as e:
                 raise Exception(f'remove: no such command: {command_key}')
                 
         def replace(self, command_key: str, new_value: str):
-            commands = self.get_commands()
             try:
-                commands[command_key] = new_value
+                self.commands[command_key] = new_value
             except KeyError as e:
                 raise Exception(f'remove: no such command: {command_key}')
 
         def write(self, f: IOBase):
-            for personal_command, personal_impl in self.get_commands().items():
+            for personal_command, personal_impl in self.commands.items():
                 print(f'{personal_command}:', file=f)
                 for line in personal_impl.split('\n'):
                     print(f'\t{line}', file=f)
@@ -390,7 +383,7 @@ class Personalizer():
                 self.unload_personalizations()
                 return
    
-    def load_one_list_context(self, action: str, target_ctx_path: str, target_list_name: List[str], config_file_path: str) -> None:
+    def load_one_list_context(self, action: str, target_ctx_path: str, target_list_name: List[str], nominal_config_file_path: str, real_config_file_path: str) -> None:
         """Load a single list context."""
         
         try:
@@ -402,12 +395,12 @@ class Personalizer():
             deletions = []
             try:
                 # load items from config file
-                deletions = self._load_count_items_per_row(1, config_file_path)
+                deletions = self._load_count_items_per_row(1, real_config_file_path)
             except ItemCountError:
-                raise LoadError(f'files containing deletions must have just one value per line, skipping entire file: "{config_file_path}"')
+                raise LoadError(f'files containing deletions must have just one value per line, skipping entire file: "{nominal_config_file_path}"')
                 
             except FileNotFoundError:
-                raise LoadError(f'missing file for delete entry, skipping: "{config_file_path}"')
+                raise LoadError(f'missing file for delete entry, skipping: "{nominal_config_file_path}"')
 
             # logging.debug(f'load_one_list_context: {deletions=}')
 
@@ -416,15 +409,15 @@ class Personalizer():
 
         elif action.upper() == 'ADD' or action.upper() == 'REPLACE':
             additions = {}
-            if config_file_path:  # some REPLACE entries may not have filenames, and that's okay
+            if real_config_file_path:  # some REPLACE entries may not have filenames, and that's okay
                 try:
-                    for row in self._load_count_items_per_row(2, config_file_path):
+                    for row in self._load_count_items_per_row(2, real_config_file_path):
                         additions[ row[0] ] = row[1]
                 except ItemCountError:
-                    raise LoadError(f'files containing additions must have just two values per line, skipping entire file: "{config_file_path}"')
+                    raise LoadError(f'files containing additions must have just two values per line, skipping entire file: "{nominal_config_file_path}"')
                     
                 except FileNotFoundError:
-                    raise LoadError(f'missing file for add or replace entry, skipping: "{config_file_path}"')
+                    raise LoadError(f'missing file for add or replace entry, skipping: "{nominal_config_file_path}"')
             
             if action.upper() == 'REPLACE':
                 target_list.clear()
@@ -458,12 +451,13 @@ class Personalizer():
                 logging.debug(f'load_list_personalizations: {target_contexts=}')
             
         # use str, not Path
-        control_file = str(self.personal_config_folder / self.personal_list_control_file_subpath)
+        nominal_control_file = self.personal_config_folder / self.personal_list_control_file_subpath
+        real_control_file = os.path.realpath(nominal_control_file)
         
         if self.testing:
-            logging.debug(f'load_list_personalizations: loading customizations from "{control_file}"...')
+            logging.debug(f'load_list_personalizations: loading customizations from "{nominal_control_file}"...')
         
-        if target_config_paths and control_file in target_config_paths:
+        if target_config_paths and real_control_file in target_config_paths:
             # if we're reloading the control file, then we're doing everything anyways
             target_config_paths = None
 
@@ -473,8 +467,8 @@ class Personalizer():
             if self._is_list_config_file(path):
                 self._unwatch(path, self._update_config)
 
-        if os.path.exists(control_file):
-            self._watch(control_file, self._update_config)
+        if os.path.exists(real_control_file):
+            self._watch(real_control_file, self._update_config)
         else:
             # nothing to do, apparently
             return
@@ -482,20 +476,22 @@ class Personalizer():
         try:
             # loop through the control file and do the needful
             line_number = 0
-            for action, source_file_path, target_list, *remainder in self._get_config_lines(control_file, escapechar=None):
+            for action, source_file_path, target_list, *remainder in self._get_config_lines(real_control_file, escapechar=None):
                 line_number += 1
 
                 target_ctx_path = self._get_context_from_path(source_file_path)
 
                 # determine the CSV file path, check error cases and establish config file watches
-                config_file_path = None
+                nominal_config_file_path = None
+                real_config_file_path = None
                 if len(remainder):
                     # use str, not Path
-                    config_file_path = str(self.personal_config_folder / self.personal_list_folder_name / remainder[0])
-                    if os.path.exists(config_file_path):
-                        self._watch(config_file_path, self._update_config)
+                    nominal_config_file_path = str(self.personal_config_folder / self.personal_list_folder_name / remainder[0])
+                    real_config_file_path = os.path.realpath(nominal_config_file_path)
+                    if os.path.exists(real_config_file_path):
+                        self._watch(nominal_config_file_path, self._update_config)
                     else:
-                        logging.error(f'load_list_personalizations: file not found for {action.upper()} entry, skipping: "{config_file_path}"')
+                        logging.error(f'load_list_personalizations: file not found for {action.upper()} entry, skipping: "{nominal_config_file_path}"')
                         continue
                 elif action.upper() != 'REPLACE':
                     logging.error(f'load_list_personalizations: missing file name for {action.upper()} entry, skipping: "{target_list}"')
@@ -507,7 +503,7 @@ class Personalizer():
                     if not target_ctx_path in target_contexts:
                         # current target is not in the list of targets, skip
                         if self.testing:
-                            logging.debug(f'load_list_personalizations: {control_file}, SKIPPING at line {line_number} - {target_ctx_path} not in given list of target contexts')
+                            logging.debug(f'load_list_personalizations: {nominal_control_file}, SKIPPING at line {line_number} - {target_ctx_path} not in given list of target contexts')
                         continue
                     
                 if self.testing:
@@ -515,16 +511,16 @@ class Personalizer():
 
                 if target_config_paths:
                     # we are loading some, not all, paths. see if the current path matches our list.
-                    # note: this does the right thing even when config_file_path is None, which is sometimes the case.
-                    if config_file_path in target_config_paths:
+                    # note: this does the right thing even when real_config_file_path is None, which is sometimes the case.
+                    if real_config_file_path in target_config_paths:
                         #if self.testing:
-                        #    logging.debug(f'load_list_personalizations: loading {config_file_path}, because it is in given list of target config paths"')
+                        #    logging.debug(f'load_list_personalizations: loading {nominal_config_file_path}, because it is in given list of target config paths"')
                         
                         # consume the list as we go so at the end we know if we missed any paths
-                        target_config_paths.remove(config_file_path)
+                        target_config_paths.remove(real_config_file_path)
                     else:
                         if self.testing:
-                            logging.debug(f'load_list_personalizations: {control_file}, SKIPPING at line {line_number} - {config_file_path} is NOT in given list of target config paths.')
+                            logging.debug(f'load_list_personalizations: {nominal_control_file}, SKIPPING at line {line_number} - {nominal_config_file_path} is NOT in given list of target config paths.')
                         continue
 
                 if not target_ctx_path in registry.contexts:
@@ -533,12 +529,12 @@ class Personalizer():
                 
                 # load the target context
                 try:
-                    self.load_one_list_context(action, target_ctx_path, target_list, config_file_path)
+                    self.load_one_list_context(action, target_ctx_path, target_list, nominal_config_file_path, real_config_file_path)
                 except FilenameError as e:
-                    logging.error(f'load_list_personalizations: {control_file}, SKIPPING at line {line_number} - {str(e)}')
+                    logging.error(f'load_list_personalizations: {nominal_control_file}, SKIPPING at line {line_number} - {str(e)}')
                     continue
                 except LoadError as e:
-                    logging.error(f'load_list_personalizations: {control_file}, SKIPPING at line {line_number} - {str(e)}')
+                    logging.error(f'load_list_personalizations: {nominal_control_file}, SKIPPING at line {line_number} - {str(e)}')
                     continue
 
                 #if self.testing:
@@ -572,18 +568,21 @@ class Personalizer():
 
     def _get_short_path(self, path: str) -> str:
         short_path = Path(path)
-        if short_path.is_relative_to(self.personal_config_folder):
+        if short_path.is_relative_to(os.path.realpath(self.personal_config_folder)):
             
-            short_path = short_path.relative_to(self.personal_config_folder)
+            short_path = short_path.relative_to(os.path.realpath(self.personal_config_folder))
         else:
-            short_path = short_path.relative_to(actions.path.talon_user())
+            short_path = short_path.relative_to(os.path.realpath(actions.path.talon_user()))
         
         # return str, not Path
         return str(short_path)
 
-    def _watch(self, path: str, method_ref: Callable) -> None:
+    def _watch(self, path_in: str, method_ref: Callable) -> None:
         """Internal wrapper method to set a file watch."""
-
+        
+        # follow symlinks before watching/unwatching
+        path = os.path.realpath(path_in)
+        
         watched_paths = self._get_watched_paths_for_method(method_ref)
         if path not in watched_paths:
             # if self.testing:
@@ -596,8 +595,11 @@ class Personalizer():
 
             fs.watch(path, method_ref)
 
-    def _unwatch(self, path: str, method_ref: Callable) -> None:
+    def _unwatch(self, path_in: str, method_ref: Callable) -> None:
         """Internal wrapper method to clear (unset) a file watch."""
+        
+        # follow symlinks before watching/unwatching
+        path = os.path.realpath(path_in)
         
         # if self.testing:
         #     short_path = self._get_short_path(path)
@@ -614,11 +616,8 @@ class Personalizer():
             # if a file disappears before we can unwatch it, we don't really care
             pass
 
-    def load_one_command_context(self, action: str, target_ctx_path : str, config_file_name : str) -> None:
+    def load_one_command_context(self, action: str, target_ctx_path : str, nominal_config_file_path : str, real_config_file_path : str) -> None:
         """Load a single command context."""
-
-        # use str, not Path
-        config_file_path = str(self.personal_config_folder / config_file_name)
 
         try:
             commands = self.get_command_personalizations(target_ctx_path)
@@ -626,17 +625,17 @@ class Personalizer():
             raise LoadError(f'load_one_command_context: not found: {str(e)}')
 
         if self.testing:
-            logging.debug(f'load_one_command_context: {commands=}')
+            logging.debug(f'load_one_command_context: {commands.commands=}')
 
         if action.upper() == 'DELETE':
             deletions = []
             try:
                 # load items from source file
-                deletions = self._load_count_items_per_row(1, config_file_path)
+                deletions = self._load_count_items_per_row(1, real_config_file_path)
             except ItemCountError:
-                raise LoadError(f'files containing deletions must have just one value per line, skipping entire file: "{config_file_path}"')
+                raise LoadError(f'files containing deletions must have just one value per line, skipping entire file: "{nominal_config_file_path}"')
             except FileNotFoundError:
-                raise LoadError(f'missing file for delete entry, skipping: "{config_file_path}"')
+                raise LoadError(f'missing file for delete entry, skipping: "{nominal_config_file_path}"')
 
             #if self.testing:
             #    logging.debug(f'load_one_command_context: {deletions=}')
@@ -648,7 +647,7 @@ class Personalizer():
         elif action.upper() == 'REPLACE':
             try:
                 # load items from source file
-                for row in self._load_count_items_per_row(2, config_file_path):
+                for row in self._load_count_items_per_row(2, real_config_file_path):
                     target_command = row[0]
                     replacement_command = row[1]
 
@@ -662,9 +661,9 @@ class Personalizer():
                     commands.remove(target_command)
                     commands.replace(replacement_command, impl)
             except ItemCountError:
-                raise LoadError(f'files containing additions must have just two values per line, skipping entire file: "{config_file_name}"')
+                raise LoadError(f'files containing additions must have just two values per line, skipping entire file: "{nominal_config_file_path}"')
             except FileNotFoundError:
-                raise LoadError(f'missing file for add or replace entry, skipping: "{config_file_path}"')
+                raise LoadError(f'missing file for add or replace entry, skipping: "{nominal_config_file_path}"')
             
         else:
             raise LoadError(f'unknown action, skipping: "{action}"')
@@ -681,12 +680,13 @@ class Personalizer():
             raise ValueError('load_command_personalizations: bad arguments - cannot accept both "target_contexts" and "target_config_paths" at the same time.')
 
         # use str, not Path
-        control_file = str(self.personal_config_folder / self.personal_command_control_file_subpath)
+        nominal_control_file = self.personal_config_folder / self.personal_command_control_file_subpath
+        real_control_file = os.path.realpath(nominal_control_file)
 
         if self.testing:
-            logging.debug(f'load_command_personalizations: loading customizations from "{control_file}"...')
+            logging.debug(f'load_command_personalizations: loading customizations from "{real_control_file}"...')
         
-        if target_config_paths and control_file in target_config_paths:
+        if target_config_paths and real_control_file in target_config_paths:
             # if we're reloading the control file, then we're doing everything anyways
             target_config_paths = None
             
@@ -696,8 +696,8 @@ class Personalizer():
             if self._is_command_config_file(path):
                 self._unwatch(path, self._update_config)
 
-        if os.path.exists(control_file):
-            self._watch(control_file, self._update_config)
+        if os.path.exists(real_control_file):
+            self._watch(real_control_file, self._update_config)
         else:
             # nothing to do, apparently
             return
@@ -705,18 +705,20 @@ class Personalizer():
         try:
             # loop through the control file and do the needful
             line_number = 0
-            for action, source_file_path, config_file_name in self._get_config_lines(control_file, escapechar=None):
+            for action, source_file_path, config_file_name in self._get_config_lines(real_control_file, escapechar=None):
                 line_number += 1
 
                 target_ctx_path = self._get_context_from_path(source_file_path)
 
                 # determine the CSV file path, check error cases and establish config file watches
                 # use str, not Path
-                config_file_path = str(self.personal_config_folder / self.personal_command_folder_name / config_file_name)
-                if os.path.exists(config_file_path):
-                    self._watch(config_file_path, self._update_config)
+
+                nominal_config_file_path = str(self.personal_config_folder / self.personal_command_folder_name / config_file_name)
+                real_config_file_path = os.path.realpath(nominal_config_file_path)
+                if os.path.exists(real_config_file_path):
+                    self._watch(real_config_file_path, self._update_config)
                 else:
-                    logging.error(f'load_command_personalizations: {control_file}, at line {line_number} - file not found for {action.upper()} entry, skipping: "{config_file_path}"')
+                    logging.error(f'load_command_personalizations: {nominal_control_file}, at line {line_number} - file not found for {action.upper()} entry, skipping: "{nominal_config_file_path}"')
                     continue
                 
                 if self.testing:
@@ -725,27 +727,27 @@ class Personalizer():
                 if target_contexts and not target_ctx_path in target_contexts:
                     # current target is not in the list of targets, skip
                     if self.testing:
-                        logging.debug(f'load_command_personalizations: {control_file}, SKIPPING at line {line_number} - {target_ctx_path} not in list of target contexts')
+                        logging.debug(f'load_command_personalizations: {nominal_control_file}, SKIPPING at line {line_number} - {target_ctx_path} not in list of target contexts')
                     continue
 
                 if target_config_paths:
-                    if config_file_path in target_config_paths:
+                    if real_config_file_path in target_config_paths:
                         # consume the list as we go so at the end we know if we missed any paths
-                        target_config_paths.remove(config_file_path)
+                        target_config_paths.remove(real_config_file_path)
                     else:
                         if self.testing:
-                            logging.debug(f'load_command_personalizations: {control_file}, SKIPPING at line {line_number} - {config_file_path} is NOT in given list of target config paths')
+                            logging.debug(f'load_command_personalizations: {nominal_control_file}, SKIPPING at line {line_number} - {nominal_config_file_path} is NOT in given list of target config paths')
                         continue
 
                 if not target_ctx_path in registry.contexts:
-                    logging.error(f'load_command_personalizations: {control_file}, at line {line_number} - cannot personalize commands for a context that does not exist, skipping: "{target_ctx_path}"')
+                    logging.error(f'load_command_personalizations: {nominal_control_file}, at line {line_number} - cannot personalize commands for a context that does not exist, skipping: "{target_ctx_path}"')
                     continue
 
                 value = None
                 try:
-                    value = self.load_one_command_context(action, target_ctx_path, config_file_path)
+                    value = self.load_one_command_context(action, target_ctx_path, nominal_config_file_path, real_config_file_path)
                 except LoadError as e:
-                    logging.error(f'load_command_personalizations: {control_file}, at line {line_number} - {str(e)}')
+                    logging.error(f'load_command_personalizations: {nominal_control_file}, at line {line_number} - {str(e)}')
                     continue
 
                 self._watch_source_file_for_context(target_ctx_path, self._update_personalizations)
@@ -754,7 +756,7 @@ class Personalizer():
                     updated_contexts.add(target_ctx_path)
 
         except (FilenameError, LoadError) as e:
-            logging.error(f'load_command_personalizations: {control_file}, at line {line_number} - {str(e)}')
+            logging.error(f'load_command_personalizations: {nominal_control_file}, at line {line_number} - {str(e)}')
         except FileNotFoundError as e:
             # this block is necessary because the inner try blocks above do not catch this error
             # completely ...something's odd about the way talon is handling these exceptions.
@@ -1017,16 +1019,24 @@ class Personalizer():
     def _get_lines_from_csv(self, path_string: str, escapechar: str ='\\') -> List[List[str]]:
         """Retrieves contents of CSV file in personalization config folder."""
         
-        path = Path(path_string)
+        path = Path(os.path.realpath(path_string))
         
-        if not self.personal_config_folder in path.parents:
-            raise Exception(f'get_lines_from_csv: file must be in the config folder, "self.personal_csv_folder", skipping: {path}')
+        personal_config_folder = os.path.realpath(self.personal_config_folder)
+        if not path.is_relative_to(personal_config_folder):
+            # logging.debug(f'{path.parents[:]}')
+            # msg = f'get_lines_from_csv: file must be in the config folder, {personal_config_folder}, skipping: {path}'
+            msg = f'get_lines_from_csv: file must be in the config folder, {self.personal_config_folder}, skipping: {path_string}'
+            raise Exception(msg)
 
         if not path.suffix == ".csv":
             raise FilenameError(f'get_lines_from_csv: file name must end in ".csv", skipping: {path}')
 
+        realpath = os.path.realpath(str(path))
+
+        # print(f'_get_lines_from_csv: {path} -> {realpath}')
+
         rows = []
-        with open(str(path), "r") as f:
+        with open(realpath, "r") as f:
             rows = list(csv.reader(f, escapechar=escapechar))
 
         # logging.debug(f'_get_lines_from_csv: returning {rows}')
@@ -1083,7 +1093,10 @@ class Personalizer():
     
     def _get_config_category(self, path: str) -> str:
         """Return parent directory name of given path relative to the personalization configuration folder, e.g. list_personalization"""
-        temp = os.path.relpath(path, self.personal_config_folder)
+        realpath = os.path.realpath(path)
+        personal_config_folder = os.path.realpath(self.personal_config_folder)
+        
+        temp = os.path.relpath(realpath, personal_config_folder)
         temp = temp.split(os.path.sep)
 
         category = None
@@ -1130,7 +1143,8 @@ class Personalizer():
         if self.testing:
             logging.debug(f'_monitor_config_dir: starting - {path, flags}')
 
-        if Path(path) == self.personal_config_folder and flags.exists:
+        real_personal_config_folder = os.path.realpath(self.personal_config_folder)
+        if Path(path) == real_personal_config_folder and flags.exists:
             # config folder has reappeared, stop watching the parent folder and begin
             # watching the config folder again.
             self._unwatch(self.personal_config_folder_parent, self._monitor_config_dir)
@@ -1153,7 +1167,8 @@ class Personalizer():
             # stop watching files after they've been deleted
             self._unwatch(path, self._update_config)
             
-            if Path(path) == self.personal_config_folder:
+            real_personal_config_folder = os.path.realpath(self.personal_config_folder)            
+            if Path(path) == real_personal_config_folder:
                 # wait for config folder to reappear
                 self._watch(self.personal_config_folder_parent, self._monitor_config_dir)
             
