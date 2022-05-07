@@ -88,7 +88,6 @@
 # 2022-05-05 23:17:12 DEBUG load_one_command_context: commands={'testphrase one': 'key(alt-tab)\nsleep(200ms)\nkey(alt-tab)\n', 'test delete one': "'test delete one'", 'test delete two': "'test delete two'", 'test delete three': "'test delete three'"}
 # 2022-05-05 23:17:12 DEBUG _split_context_to_user_path_and_file_name: context_path='user.knausj_talon.misc.testfile.talon'
 #
-# 2.
 #
 
 import os
@@ -122,6 +121,73 @@ def atexit():
 
 class Personalizer():
     
+    class PersonalContext():
+        def __init__(self, ctx_path: str):
+            if not ctx_path in registry.contexts:
+                raise Exception(f'__init__: cannot redefine a context that does not exist: "{ctx_path}"')
+            self.ctx_path = ctx_path
+
+    class PersonalListContext(PersonalContext):
+        def __init__(self, ctx_path: str):
+            super().__init__(ctx_path)
+
+            self.lists = {}
+
+        def get_list(self, list_name: str):
+            if not list_name in self.lists:
+                try:
+                    self.lists[list_name] = dict(registry.lists[list_name][0])
+                except KeyError as e:
+                    raise Exception(f'remove: no such list: {list_name}')
+
+            return self.lists[list_name]
+                    
+        def remove(self, list_name: str):
+            try:
+                del self.lists[list_name]
+            except KeyError as e:
+                raise Exception(f'remove: no such list: {list_name}')
+                
+        def write(self, f: IOBase):
+            pp = pprint.PrettyPrinter(indent=4)
+            for list_name, list_value in self.lists.items():
+                print(f'ctx.lists["{list_name}"] = {pp.pformat(list_value)}\n', file=f)
+                
+    class PersonalCommandContext(PersonalContext):
+        def __init__(self, ctx_path: str):
+            super().__init__(ctx_path)
+
+            self.commands = {}
+        
+        def get_commands(self):
+            if self.commands is None:
+                # need to copy this way to avoid KeyErrors in current Talon versions
+                self.commands = {v.rule.rule:v.target.code for k,v in registry.contexts[self.ctx_path].commands.items()}
+
+            return self.commands
+
+        # WIP - maybe rename as 'mask'
+        def remove(self, command_key: str):
+            commands = self.get_commands()
+            try:
+                # del commands[command_key]
+                commands[command_key] = 'skip()'
+            except KeyError as e:
+                raise Exception(f'remove: no such command: {command_key}')
+                
+        def replace(self, command_key: str, new_value: str):
+            commands = self.get_commands()
+            try:
+                commands[command_key] = new_value
+            except KeyError as e:
+                raise Exception(f'remove: no such command: {command_key}')
+
+        def write(self, f: IOBase):
+            for personal_command, personal_impl in self.get_commands().items():
+                print(f'{personal_command}:', file=f)
+                for line in personal_impl.split('\n'):
+                    print(f'\t{line}', file=f)
+                
     def __init__(self):
         # this code has multiple event triggers which may overlap. so, we use a mutex to make sure
         # only one copy runs at a time.
@@ -145,7 +211,7 @@ class Personalizer():
         self._ctx.matches = f'tag: {self.personalization_tag_name_qualified}'
         
         # structure used to store metadata for all personalized contexts
-        self._personalizations = {}
+        self._personalizations: Dict[str, PersonalContext] = {}
 
         # track modification times of updated files, so we reload only when needed rather than every
         # time Talon invokes the callback.
@@ -324,26 +390,14 @@ class Personalizer():
                 self.unload_personalizations()
                 return
    
-    def load_one_list_context(self, action: str, target_ctx_path: str, target_list: List[str], config_file_path: str) -> Dict[str, str]:
+    def load_one_list_context(self, action: str, target_ctx_path: str, target_list_name: List[str], config_file_path: str) -> None:
         """Load a single list context."""
         
         try:
-            list_personalizations = self.get_list_personalizations(target_ctx_path)
-            if target_list in list_personalizations:
-                source = list_personalizations[target_list]
-                
-                if self.testing:
-                    logging.debug(f'load_one_list_context: using internal (previously personalized) list definition - {source}')
-            else:
-                source = registry.lists[target_list][0]
-                    
-                if self.testing:
-                    logging.debug(f'load_one_list_context: using registry list definition - {source=}')
-                    
+            target_list = self.get_list_personalization(target_ctx_path, target_list_name)
         except KeyError as e:
-            raise LoadError(f'cannot redefine a list that does not exist, skipping: "{target_list}"')
+            raise LoadError(f'load_one_list_context: not found: {str(e)}')
 
-        value = {}
         if action.upper() == 'DELETE':
             deletions = []
             try:
@@ -357,8 +411,8 @@ class Personalizer():
 
             # logging.debug(f'load_one_list_context: {deletions=}')
 
-            value = source.copy()
-            value = { k:v for k,v in source.items() if k not in deletions }
+            for d in deletions:
+                del target_list[d[0]]
 
         elif action.upper() == 'ADD' or action.upper() == 'REPLACE':
             additions = {}
@@ -372,16 +426,16 @@ class Personalizer():
                 except FileNotFoundError:
                     raise LoadError(f'missing file for add or replace entry, skipping: "{config_file_path}"')
             
-            if action.upper() == 'ADD':
-                value = source.copy()
+            if action.upper() == 'REPLACE':
+                target_list.clear()
                 
             # logging.debug(f'load_one_list_context: {additions=}')
             
-            value.update(additions)
+            target_list.update(additions)
         else:
             raise LoadError(f'unknown action, skipping: "{action}"')
 
-        return value
+        return
         
     def _load_count_items_per_row(self, items_per_row: int, file_path: str) -> List[List[str]]:
         """Internal method to read a CSV file expected to have a fixed number of items per row."""
@@ -478,10 +532,8 @@ class Personalizer():
                     continue
                 
                 # load the target context
-                list_personalizations = self.get_list_personalizations(target_ctx_path)
-                value = None
                 try:
-                    value = self.load_one_list_context(action, target_ctx_path, target_list, config_file_path)
+                    self.load_one_list_context(action, target_ctx_path, target_list, config_file_path)
                 except FilenameError as e:
                     logging.error(f'load_list_personalizations: {control_file}, SKIPPING at line {line_number} - {str(e)}')
                     continue
@@ -491,9 +543,6 @@ class Personalizer():
 
                 #if self.testing:
                 #    logging.debug(f'load_list_personalizations: AFTER {action.upper()}, {value=}')
-
-                # add the new data
-                list_personalizations.update({target_list: value})
 
                 # make sure we are monitoring the source file for changes
                 self._watch_source_file_for_context(target_ctx_path, self._update_personalizations)
@@ -565,27 +614,16 @@ class Personalizer():
             # if a file disappears before we can unwatch it, we don't really care
             pass
 
-    def load_one_command_context(self, action: str, target_ctx_path : str, config_file_name : str) -> Tuple[Dict, bool, str]:
+    def load_one_command_context(self, action: str, target_ctx_path : str, config_file_name : str) -> None:
         """Load a single command context."""
 
         # use str, not Path
         config_file_path = str(self.personal_config_folder / config_file_name)
 
         try:
-            command_personalizations = self.get_command_personalizations(target_ctx_path)
-            if len(command_personalizations) > 0:
-                if self.testing:
-                    logging.debug(f'load_one_command_context: using internal (previously personalized) command set - {command_personalizations=}')
-                    
-                commands = command_personalizations
-            else:
-                if self.testing:
-                    logging.debug(f'load_one_command_context: using registry command set')
-
-                # need to copy this way to avoid KeyErrors in current Talon versions
-                commands = {v.rule.rule:v.target.code for k,v in registry.contexts[target_ctx_path].commands.items()}
+            commands = self.get_command_personalizations(target_ctx_path)
         except KeyError as e:
-            raise LoadError(f'cannot redefine a command context that does not exist, skipping: "{target_ctx_path}"')
+            raise LoadError(f'load_one_command_context: not found: {str(e)}')
 
         if self.testing:
             logging.debug(f'load_one_command_context: {commands=}')
@@ -605,7 +643,7 @@ class Personalizer():
 
             for row in deletions:
                 k = row[0]
-                commands[k] = 'skip()'
+                commands.remove(k)
             
         elif action.upper() == 'REPLACE':
             try:
@@ -620,9 +658,9 @@ class Personalizer():
                     except KeyError as e:
                         raise LoadError(f'cannot replace a command that does not exist, skipping: "{target_command}"')
                     
-                    # accumulate values
-                    commands[ target_command ] = 'skip()'
-                    commands[ replacement_command ] = impl
+                    # record changes
+                    commands.remove(target_command)
+                    commands.replace(replacement_command, impl)
             except ItemCountError:
                 raise LoadError(f'files containing additions must have just two values per line, skipping entire file: "{config_file_name}"')
             except FileNotFoundError:
@@ -634,7 +672,7 @@ class Personalizer():
         #if self.testing:
         #    logging.debug(f'load_one_command_context: AFTER {action.upper()}, {commands=}')
         
-        return commands
+        return
 
     def load_command_personalizations(self, target_contexts: List[str] = [], target_config_paths: List[str] = [], updated_contexts=None) -> None:
         """Load some (or all) defined command personalizations."""
@@ -703,16 +741,12 @@ class Personalizer():
                     logging.error(f'load_command_personalizations: {control_file}, at line {line_number} - cannot personalize commands for a context that does not exist, skipping: "{target_ctx_path}"')
                     continue
 
-                command_personalizations = self.get_command_personalizations(target_ctx_path)
-
                 value = None
                 try:
                     value = self.load_one_command_context(action, target_ctx_path, config_file_path)
                 except LoadError as e:
                     logging.error(f'load_command_personalizations: {control_file}, at line {line_number} - {str(e)}')
                     continue
-
-                command_personalizations.update(value)
 
                 self._watch_source_file_for_context(target_ctx_path, self._update_personalizations)
 
@@ -839,10 +873,7 @@ class Personalizer():
                 self._write_talon_tag_calls(f, ctx_path)
                     
                 # logging.debug(f'write_one_file: {command_personalizations=}')
-                for personal_command, personal_impl in command_personalizations.items():
-                    print(f'{personal_command}:', file=f)
-                    for line in personal_impl.split('\n'):
-                        print(f'\t{line}', file=f)
+                command_personalizations.write(f)
 
         else:
             list_personalizations = self.get_list_personalizations(ctx_path)
@@ -854,9 +885,7 @@ class Personalizer():
             with open(file_path, 'w') as f:
                 self._write_py_header(f, ctx_path)
                 self._write_py_context(f, new_match_string)
-                pp = pprint.PrettyPrinter(indent=4)
-                for list_name, list_value in list_personalizations.items():
-                    print(f'ctx.lists["{list_name}"] = {pp.pformat(list_value)}\n', file=f)
+                list_personalizations.write(f)
 
     def _get_source_match_string(self, context_path: str) -> str:
         """Return context match string for given context."""
@@ -963,16 +992,20 @@ class Personalizer():
         context_personalizations = self.get_personalizations(context_path)
 
         if not 'lists' in context_personalizations:
-            context_personalizations['lists'] = {}
+            context_personalizations['lists'] = self.PersonalListContext(context_path)
             
         return context_personalizations['lists']
+
+    def get_list_personalization(self, ctx_path: str, list_name: str) -> PersonalListContext:
+        list_personalizations = self.get_list_personalizations(ctx_path)
+        return list_personalizations.get_list(list_name)
 
     def get_command_personalizations(self, context_path: str) -> Dict:
         """Returned command personalizations for given context path"""
         context_personalizations = self.get_personalizations(context_path)
 
         if not 'commands' in context_personalizations:
-            context_personalizations['commands'] = {}
+            context_personalizations['commands'] = self.PersonalCommandContext(context_path)
             
         return context_personalizations['commands']
 
