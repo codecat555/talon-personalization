@@ -90,6 +90,11 @@
 #
 #
 
+# WIP - need to make sure we handle the case where multiple contexts are defined in the same (.py) file...if
+# WIP - the user wants to override a list in such a file, we need to figure out whether the context is the
+# WIP - "normal" default one or whether it has a .1, .2, etc. appended. Perhaps important when translating
+# WIP - paths to context paths...!
+
 import os
 from threading import RLock
 from pathlib import Path
@@ -182,6 +187,9 @@ class Personalizer():
                     print(f'\t{line}', file=f)
                 
     def __init__(self):
+        # enable/disable debug messages
+        self.testing = True
+        
         # this code has multiple event triggers which may overlap. so, we use a mutex to make sure
         # only one copy runs at a time.
         self._personalization_mutex: RLock = RLock()
@@ -218,7 +226,7 @@ class Personalizer():
         # folder where personalized contexts are kept
         self.personal_folder_name = '_personalizations'
         self.personal_folder_path = Path(__file__).parents[1] / self.personal_folder_name
-        
+
         # where config files are stored
         self.personal_config_folder_name = 'config'
         self.personal_config_folder = Path(__file__).parents[1] / self.personal_config_folder_name
@@ -239,8 +247,6 @@ class Personalizer():
         self.personal_command_control_file_path = os.path.join(self.personal_config_folder, self.personal_command_folder_name)
         os.makedirs(self.personal_command_control_file_path, mode=550, exist_ok=True)
         
-        self.testing = True
-  
         # header written to personalized context files
         self.personalized_header = r"""
 # DO NOT MODIFY THIS FILE - it has been dynamically generated in order to override some of
@@ -268,7 +274,7 @@ class Personalizer():
                 self._unwatch_all(method)
             except Exception as e:
                 logging.warning(f'__del__: {str(e)}')
-    
+
     def _refresh_settings(self, target_ctx_path: str, new_value: Any) -> None:
         """Callback for handling Talon settings changes"""
         #if self.testing:
@@ -321,7 +327,7 @@ class Personalizer():
                             else:
                                 if self.testing:
                                     logging.debug(f'unload_personalizations: target context matches')
-                                    
+
                         if self.testing:
                             logging.debug(f'unload_personalizations: unloading context {ctx_path} ({file_path})')
 
@@ -405,7 +411,7 @@ class Personalizer():
             # logging.debug(f'load_one_list_context: {deletions=}')
 
             for d in deletions:
-                del target_list[d[0]]
+                    del target_list[d[0]]
 
         elif action.upper() == 'ADD' or action.upper() == 'REPLACE':
             additions = {}
@@ -864,7 +870,7 @@ class Personalizer():
             command_personalizations = self.get_command_personalizations(ctx_path)
 
             if self.testing:
-                logging.debug(f'update_one_file: writing command customizations to "{file_path}"...')
+                logging.debug(f'write_one_file: writing command customizations to "{file_path}"...')
                 
             with open(file_path, 'w') as f:
                 self._write_talon_header(f, ctx_path)
@@ -1206,8 +1212,8 @@ class Personalizer():
         except FileNotFoundError as e:
             mtime = 0
 
-        if self.testing:
-            logging.debug(f'_is_modified: current timestamp: {mtime}')
+        # if self.testing:
+        #     logging.debug(f'_is_modified: current timestamp: {mtime}')
 
         if path in self._updated_paths:
             if self.testing:
@@ -1247,12 +1253,12 @@ class Personalizer():
             if self._updated_paths[path] == mtime:
                 return False
             else:
-                if self.testing:
-                    logging.debug(f'_is_modified: path is modified, update mtime.')
+                # if self.testing:
+                #     logging.debug(f'_is_modified: path is modified, update mtime.')
                 pass
         else:
-            if self.testing:
-                logging.debug(f'_is_modified: path is NOT known, record mtime.')
+            # if self.testing:
+            #     logging.debug(f'_is_modified: path is NOT known, record mtime.')
             pass
 
         self._updated_paths[path] = mtime
@@ -1272,7 +1278,7 @@ def on_ready() -> None:
 
     # catch updates
     settings.register("", personalizer._refresh_settings)
-        
+    
 personalizer = Personalizer()
 
 app.register("ready", on_ready)
