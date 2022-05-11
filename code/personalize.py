@@ -104,7 +104,7 @@ from shutil import rmtree
 from typing import Any, List, Dict, Union, Tuple, Callable
 import logging
 from io import IOBase
-import atexit
+# import atexit
 
 from talon import Context, registry, app, Module, settings, actions, fs
 
@@ -117,12 +117,34 @@ class ItemCountError(Exception):
 class FilenameError(Exception):
     pass
 
-# make sure file watches are released
-def atexit():
-    if p:
-        if p.testing:
-            logging.debug(f'atexit: destroying Personalizer instance before exiting...')
-        del p
+# enabled/disable debug messages
+testing = True
+
+# # make sure file watches are released, etc.
+# @atexit.register
+# def cleanup():
+#     if p:
+#         if p.testing:
+#             logging.debug(f'atexit: destroying Personalizer instance before exiting...')
+#         del p
+
+mod = Module()
+ctx = Context()
+
+enable_setting = mod.setting(
+    "enable_personalization",
+    type=bool,
+    default=False,
+    desc="Whether to enable the personalizations defined by the CSV files in the settings folder.",
+)
+
+personalization_tag_name = 'personalization'
+personalization_tag = mod.tag(personalization_tag_name, desc='enable personalizations')
+
+# we have two mutually exclusive ways of monitoring for updates, neither of them
+# really work at this time, unfortunately...
+monitor_registry_for_updates = False
+monitor_filesystem_for_updates = not monitor_registry_for_updates
 
 class Personalizer():
     
@@ -130,7 +152,10 @@ class Personalizer():
         def __init__(self, ctx_path: str):
             if not ctx_path in registry.contexts:
                 raise Exception(f'__init__: cannot redefine a context that does not exist: "{ctx_path}"')
+
             self.ctx_path = ctx_path
+
+            self.testing = testing
 
     class PersonalListContext(PersonalContext):
         def __init__(self, ctx_path: str):
@@ -144,6 +169,9 @@ class Personalizer():
                     self.lists[list_name] = dict(registry.lists[list_name][0])
                 except KeyError as e:
                     raise Exception(f'remove: no such list: {list_name}')
+
+                if self.testing:
+                   logging.debug(f'get_list: loaded list from registry: {list_name} = {self.lists[list_name]}')
 
             return self.lists[list_name]
                     
@@ -162,11 +190,12 @@ class Personalizer():
         def __init__(self, ctx_path: str):
             super().__init__(ctx_path)
 
-            # self.commands = {}
+            if self.testing:
+                   logging.debug(f'__init__: loading commands from registry for context {ctx_path}')
+
             # need to copy this way to avoid KeyErrors (in current Talon versions)
             self.commands = {v.rule.rule:v.target.code for k,v in registry.contexts[self.ctx_path].commands.items()}
         
-        # WIP - maybe rename as 'mask'
         def remove(self, command_key: str):
             try:
                 # del commands[command_key]
@@ -186,7 +215,7 @@ class Personalizer():
                 for line in personal_impl.split('\n'):
                     print(f'\t{line}', file=f)
                 
-    def __init__(self):
+    def __init__(self, mod, ctx, enable_setting, personalization_tag_name, personalization_tag):
         # enable/disable debug messages
         self.testing = True
         
@@ -194,25 +223,23 @@ class Personalizer():
         # only one copy runs at a time.
         self._personalization_mutex: RLock = RLock()
 
-        self._mod = Module()
-        
-        self.enable_setting = self._mod.setting(
-            "enable_personalization",
-            type=bool,
-            default=False,
-            desc="Whether to enable the personalizations defined by the CSV files in the settings folder.",
-        )
+        # capture args
+        self._mod = mod
+        self._ctx = ctx        
+        self.enable_setting = enable_setting
 
         # the tag used to enable/disable personalized contexts
-        self.personalization_tag_name = 'personalization'
-        self.personalization_tag_name_qualified = 'user.' + self.personalization_tag_name
-        self.personalization_tag = self._mod.tag(self.personalization_tag_name, desc='enable personalizations')
+        # self.personalization_tag_name = 'personalization'
+        self.personalization_tag_name_qualified = 'user.' + personalization_tag_name
+        self.personalization_tag = personalization_tag
 
-        self._ctx = Context()
-        self._ctx.matches = f'tag: {self.personalization_tag_name_qualified}'
-        
-        # structure used to store metadata for all personalized contexts
-        self._personalizations: Dict[str, PersonalContext] = {}
+        # structure used to track all contexts received from config files. these persist even when
+        # the referenced contexts are unloaded by Talon.
+        self._configured_contexts = set()
+
+        # structure used to store metadata for all personalized contexts. loading populates this
+        # structure, unloading depopulates it.
+        self._personalizations: Dict[str, Personalizer.PersonalContext] = {}
 
         # track modification times of updated files, so we reload only when needed rather than every
         # time Talon invokes the callback.
@@ -223,13 +250,19 @@ class Personalizer():
 
         self.control_file_name = 'control.csv'
 
+        # path to the folder where all personalization stuff is kept
+        #  this will need to change if this module is ever relocated
+        self.personalization_root_folder_path = Path(__file__).parents[1]
+
         # folder where personalized contexts are kept
         self.personal_folder_name = '_personalizations'
-        self.personal_folder_path = Path(__file__).parents[1] / self.personal_folder_name
+        self.personal_folder_path =  self.personalization_root_folder_path / self.personal_folder_name
+
+        self.personalization_context_path_prefix = self._get_personalization_context_path_prefix()
 
         # where config files are stored
         self.personal_config_folder_name = 'config'
-        self.personal_config_folder = Path(__file__).parents[1] / self.personal_config_folder_name
+        self.personal_config_folder = self.personalization_root_folder_path / self.personal_config_folder_name
         os.makedirs(self.personal_config_folder, mode=550, exist_ok=True)
 
         # we monitor this folder if the config directory ever disappears, looking for a reappearance
@@ -261,20 +294,36 @@ class Personalizer():
         # tag for personalized context matches
         self.tag_expression = f'tag: {self.personalization_tag_name_qualified}'
 
+    def _get_personalization_context_path_prefix(self):
+        top_level_relative = os.path.relpath(self.personalization_root_folder_path, actions.path.talon_user())
+        ctx_path = 'user.' + top_level_relative.replace(os.path.sep, '.')
+        # if self.testing:
+        #    logging.debug(f'_get_personalization_context_path_prefix: returning "{ctx_path}"')
+        return ctx_path
+
     def __del__(self) -> None:
-        #if self.testing:
-        #    logging.debug(f'__del__: unloading personalizations on object destruction...')
-        # self.unload_personalizations()
-        
         if self.testing:
-            logging.debug(f'__del__: releasing file watches on object destruction...')
+            logging.debug(f'__del__: Personalizer object destruction...')
+        return
+        
+    #     if self.testing:
+    #         logging.debug(f'__del__: releasing file watches on object destruction...')
 
-        for method in [self._update_personalizations, self._update_config, self._monitor_config_dir]:
-            try:
-                self._unwatch_all(method)
-            except Exception as e:
-                logging.warning(f'__del__: {str(e)}')
+    #     # try:
+    #     #     settings.unregister("", personalizer._refresh_settings)
+    #     #     registry.unregister("", personalizer._update_context)
+    #     # except:
+    #     #     logging.warning(f'__del__: unregister - {str(e)}')
 
+    #     # for method in [self._update_personalizations, self._update_config, self._monitor_config_dir]:
+    #     for method in [self._update_config, self._monitor_config_dir]:
+    #         try:
+    #             self._unwatch_all(method)
+    #         except Exception as e:
+    #             logging.warning(f'__del__: unwatch - {str(e)}')
+
+    #     pass
+    
     def _refresh_settings(self, target_ctx_path: str, new_value: Any) -> None:
         """Callback for handling Talon settings changes"""
         #if self.testing:
@@ -328,21 +377,32 @@ class Personalizer():
                                 if self.testing:
                                     logging.debug(f'unload_personalizations: target context matches')
 
-                        if self.testing:
-                            logging.debug(f'unload_personalizations: unloading context {ctx_path} ({file_path})')
-
-                        self._unwatch(file_path, self._update_personalizations)
-                        self._purge_files([ctx_path])
-                        del self._personalizations[ctx_path]
-                    else:
-                        logging.warning(f'unload_personalizations: skipping unknown context for path "{ctx_path}"')                    
+                        self.unload_one_personalized_context(ctx_path)
             else:
                 if self.testing:
                     logging.debug(f'unload_personalizations: unloading everything...')
 
                 self._personalizations = {}
-                self._unwatch_all(self._update_personalizations)
+
+                if monitor_filesystem_for_updates:
+                    self._unwatch_all(self._update_personalizations)
+
                 self._purge_files()
+
+    def unload_one_personalized_context(self, ctx_path):
+        with self._personalization_mutex:
+            if ctx_path in self._personalizations:
+                if self.testing:
+                    logging.debug(f'unload_personalized_context: unloading context {ctx_path}')
+
+                if monitor_filesystem_for_updates:
+                    self._unwatch(file_path, self._update_personalizations)
+
+                self._purge_files([ctx_path])
+                del self._personalizations[ctx_path]
+            # else:
+            #     logging.warning(f'unload_personalized_context: skipping unknown context: {ctx_path}')
+
 
     def _unwatch_all(self, method_ref: Callable) -> None:
         """Internal method to stop watching all watched files associated with given method reference."""
@@ -411,7 +471,10 @@ class Personalizer():
             # logging.debug(f'load_one_list_context: {deletions=}')
 
             for d in deletions:
+                try:
                     del target_list[d[0]]
+                except KeyError:
+                    logging.warning(f'target list does not contain item to be deleted: target context: {target_ctx_path}, target list: {target_list}, target item: "{d[0]}"')
 
         elif action.upper() == 'ADD' or action.upper() == 'REPLACE':
             additions = {}
@@ -546,10 +609,12 @@ class Personalizer():
                 #    logging.debug(f'load_list_personalizations: AFTER {action.upper()}, {value=}')
 
                 # make sure we are monitoring the source file for changes
-                self._watch_source_file_for_context(target_ctx_path, self._update_personalizations)
+                if monitor_filesystem_for_updates:
+                    self._watch_source_file_for_context(target_ctx_path, self._update_personalizations)
 
                 if not updated_contexts is None:
                     updated_contexts.add(target_ctx_path)
+                self._configured_contexts.add(target_ctx_path)
         
         except FileNotFoundError as e:
             # below check is necessary because the inner try blocks above do not catch this error
@@ -598,6 +663,17 @@ class Personalizer():
             #         method_name = method_ref.__name__
             #     logging.debug(f'_watch: {method_name}, {short_path}')
 
+            mtime = None
+            try:
+                mtime = os.stat(path).st_mtime
+            except FileNotFoundError as e:
+                mtime = 0
+                
+            # if self.testing:
+            #     logging.debug(f'_watch: current timestamp for path {path} - {mtime}')
+
+            self._updated_paths[path] = mtime
+            
             fs.watch(path, method_ref)
 
     def _unwatch(self, path_in: str, method_ref: Callable) -> None:
@@ -755,10 +831,12 @@ class Personalizer():
                     logging.error(f'load_command_personalizations: {nominal_control_file}, at line {line_number} - {str(e)}')
                     continue
 
-                self._watch_source_file_for_context(target_ctx_path, self._update_personalizations)
+                if monitor_filesystem_for_updates:
+                    self._watch_source_file_for_context(target_ctx_path, self._update_personalizations)
 
                 if not updated_contexts is None:
                     updated_contexts.add(target_ctx_path)
+                self._configured_contexts.add(target_ctx_path)
 
         except (FilenameError, LoadError) as e:
             logging.error(f'load_command_personalizations: {nominal_control_file}, at line {line_number} - {str(e)}')
@@ -850,10 +928,10 @@ class Personalizer():
             target_contexts = self._personalizations.keys()
             
         for ctx_path in target_contexts:
-            # logging.debug(f'generate_files: {ctx_path=}')
+            logging.debug(f'generate_files: {ctx_path=}')
 
             filepath_prefix = self.get_personal_filepath_prefix(ctx_path)
-            # logging.debug(f'generate_files: {filepath_prefix=}')
+            logging.debug(f'generate_files: {filepath_prefix=}')
             
             source_match_string = self._get_source_match_string(ctx_path)
             # logging.debug(f'generate_files: {source_match_string=}')
@@ -1127,20 +1205,30 @@ class Personalizer():
             # if True or self._is_modified(path):
             if self._is_modified(path):
                 ctx_path = self._get_context_from_path(path)
-
-                if self.testing:
-                    logging.debug(f'_update_personalizations: {ctx_path=}')
-                    
-                if ctx_path.endswith('.talon'):
-                    self.unload_personalizations(target_paths = [path])
-                    self.load_command_personalizations(target_contexts = [ctx_path])
-                else:
-                    self.unload_personalizations(target_paths = [path])
-                    self.load_list_personalizations(target_contexts = [ctx_path])
-
-                self.generate_files(target_contexts=[ctx_path])
+    
+                self.load_one_personalized_context(ctx_path)
         else:
             self.unload_personalizations(target_paths = [path])
+
+    def load_one_personalized_context(self, ctx_path):
+        with self._personalization_mutex:
+            if self.testing:
+                logging.debug(f'load_one_personalized_context: considering {ctx_path=}')
+
+            # only load contexts which have been configured
+            if ctx_path in self._configured_contexts:
+                if self.testing:
+                    logging.debug(f'load_one_personalized_context: {ctx_path=}')
+                            
+                if ctx_path.endswith('.talon'):
+                    # self.unload_personalizations(is_matching_ctx = lambda x: x == ctx_path)
+                    self.load_command_personalizations(target_contexts = [ctx_path])
+                else:
+                    # self.unload_personalizations(is_matching_ctx = lambda x: x == ctx_path)
+                    self.load_list_personalizations(target_contexts = [ctx_path])
+
+                # WIP - move this out to calling context?
+                self.generate_files(target_contexts=[ctx_path])
 
     def _monitor_config_dir(self, path: str, flags: Any) -> None:
         """Callback method for responding to config folder re-creation after deletion."""
@@ -1216,8 +1304,8 @@ class Personalizer():
         #     logging.debug(f'_is_modified: current timestamp: {mtime}')
 
         if path in self._updated_paths:
-            if self.testing:
-                logging.debug(f'_is_modified: path is known with timestamp {self._updated_paths[path]}.')
+            # if self.testing:
+            #     logging.debug(f'_is_modified: path is known with timestamp {self._updated_paths[path]}.')
                 
             # WIP - sometimes the file timestamp changes between one invocation of this method and the next, even
             # WIP - though the file has not actually been changed. not sure why this is happening. An example -
@@ -1271,14 +1359,68 @@ class Personalizer():
         paths = [k for k,v in path_to_callback_map.items() if v == method]
         return paths
 
+    # def _update_decls(self, decls) -> None:
+    #     l = getattr(decls, 'lists')
+    #     if 'user.punctuation' in l:
+    #         p = l['user.punctuation']
+    #         # logging.debug(f'_update_decls: {decls=}')
+    #         logging.debug(f"_update_decls: {l['user.punctuation']=}")
+    #         logging.debug(f"_update_decls: {l['user.punctuation']=}")
+    #     pass
+
+    def _update_context(self, action: str, arg: Any = None) -> None:
+        # if self.testing:
+        #     logging.debug(f'_update_context: {self, action, arg}')
+        ctx_path = None
+        if action == "add_context" or action == "remove_context":
+            ctx_path = arg.path
+
+            # if ctx_path == self._ctx.path:
+            #     # skip changes for the context of this module, leads to filesystem recursion...
+            #     # if self.testing:
+            #     #     logging.debug(f'_update_context: skipping own context: {ctx_path}')
+            #     return
+
+            # personalized contexts should be rejected by the check below because they should
+            # never make it into self._configured_contexts, but we check here anyways just to
+            # be sure and keep the log from getting cluttered with such messages.
+            # WIP - change this to cover the entire personalizations folder
+            if ctx_path.startswith(self.personalization_context_path_prefix):
+                # skip changes for personalized contexts
+                if self.testing:
+                    logging.debug(f'_update_context: skipping personalized context: {ctx_path}')
+                return
+
+            if ctx_path not in self._configured_contexts:
+                if self.testing:
+                    logging.debug(f'_update_context: context not in configuration, skpping: {ctx_path}')
+                return
+
+            if self.testing:
+                logging.debug(f'_update_context: {action=}, {arg}')
+
+            if action == "add_context":
+                self.load_one_personalized_context(ctx_path)
+            elif action == "remove_context":
+                self.unload_one_personalized_context(ctx_path)
+            # elif action == "update_lists":
+            #     pass
+
 def on_ready() -> None:
     """Callback method for updating personalizations."""
+    global personalizer
+
+    personalizer = Personalizer(mod, ctx, enable_setting, personalization_tag_name, personalization_tag)
 
     personalizer.load_personalizations()
 
     # catch updates
     settings.register("", personalizer._refresh_settings)
     
-personalizer = Personalizer()
+    if monitor_registry_for_updates:
+        registry.register("", personalizer._update_context)
+        # registry.register("update_decls", personalizer._update_decls)
+        
+personalizer = None
 
 app.register("ready", on_ready)
