@@ -105,10 +105,9 @@ from pathlib import Path
 import csv
 import pprint
 from shutil import rmtree
-from typing import Any, List, Dict, Union, Tuple, Callable
+from typing import Any, List, Dict, Tuple, Callable
 import logging
 from io import IOBase
-# import atexit
 
 from talon import Context, registry, app, Module, settings, actions, fs
 
@@ -123,14 +122,6 @@ class FilenameError(Exception):
 
 # enabled/disable debug messages
 testing = True
-
-# # make sure file watches are released, etc.
-# @atexit.register
-# def cleanup():
-#     if p:
-#         if p.testing:
-#             logging.debug(f'atexit: destroying Personalizer instance before exiting...')
-#         del p
 
 mod = Module()
 ctx = Context()
@@ -161,7 +152,7 @@ class Personalizer():
 
             self.testing = testing
 
-        def _add_tag_to_match_string(self, tag: str) -> str:
+        def _personalize_match_string(self, tag: str) -> str:
             """Internal function to add personalization tag to the context match string."""
 
             # this method turned out to be simple enough to omit, but if new cases arise
@@ -171,7 +162,7 @@ class Personalizer():
             new_match_string: str = old_match_string + tag
 
             #if self.testing:
-            #    logging.debug(f'_add_tag_to_match_string: {old_match_string=}, {new_match_string=}')
+            #    logging.debug(f'_personalize_match_string: {old_match_string=}, {new_match_string=}')
 
             return new_match_string
             
@@ -228,7 +219,7 @@ class Personalizer():
             self.source_context = registry.contexts[ctx_path]
             self.source_match_string = self.source_context.matches
 
-        def get_list(self, list_name: str):
+        def get_list(self, list_name: str) -> Dict[str, str]:
             if not list_name in self.lists:
                 try:
                     self.lists[list_name] = dict(registry.lists[list_name][0])
@@ -249,12 +240,12 @@ class Personalizer():
         def write(self, filepath_prefix: str, tag: str, header: str):
             """Generate one personalized file"""
 
-            # logging.debug(f'write_one_file: {ctx_path=}, {new_match_string=}')
+            # logging.debug(f'write: {ctx_path=}, {new_match_string=}')
 
             file_path = filepath_prefix + '.py'
 
             if self.testing:
-                logging.debug(f'write_one_file: writing list customizations to "{file_path}"...')
+                logging.debug(f'write: writing list customizations to "{file_path}"...')
                 
             with open(file_path, 'w') as f:
                 self._write_py_header(f, header)
@@ -272,7 +263,7 @@ class Personalizer():
             print('from talon import Context', file=f)
             print('ctx = Context()', file=f)
             
-            new_match_string = self._add_tag_to_match_string(tag)
+            new_match_string = self._personalize_match_string(tag)
             print(f'ctx.matches = """{new_match_string}"""\n', file=f)
 
     class PersonalCommandContext(PersonalContext):
@@ -339,7 +330,7 @@ class Personalizer():
             """Generate one personalized file"""
 
             if self.testing:
-                logging.debug(f'write_one_file: writing command customizations to "{file_path}"...')
+                logging.debug(f'write: writing command customizations to "{file_path}"...')
                 
             with open(file_path, 'w') as f:
                 self._write_talon_header(f, header)
@@ -360,7 +351,7 @@ class Personalizer():
 
         def _write_talon_context(self, f: IOBase, tag: str) -> None:
             """Internal method for writing context definition to .talon file."""
-            new_match_string = self._add_tag_to_match_string(tag)
+            new_match_string = self._personalize_match_string(tag)
             print(f'{new_match_string}\n-', file=f)
             
         def _write_talon_tag_calls(self, f: IOBase) -> None:
@@ -369,7 +360,7 @@ class Personalizer():
                 print(line, file=f, end='')
             print(file=f)
                 
-    def __init__(self, mod, ctx, enable_setting, personalization_tag_name, personalization_tag):
+    def __init__(self, mod: Module, ctx: Context, enable_setting: Any, personalization_tag_name: str, personalization_tag: Any):
         # enable/disable debug messages
         self.testing = True
         
@@ -543,11 +534,11 @@ class Personalizer():
 
                 self._purge_files()
 
-    def unload_one_personalized_context(self, ctx_path):
+    def unload_one_personalized_context(self, ctx_path: str):
         with self._personalization_mutex:
             if ctx_path in self._personalizations:
                 if self.testing:
-                    logging.debug(f'unload_personalized_context: unloading context {ctx_path}')
+                    logging.debug(f'unload_one_personalized_context: unloading context {ctx_path}')
 
                 if monitor_filesystem_for_updates:
                     personal_context = self.get_personalizations(ctx_path)
@@ -557,7 +548,7 @@ class Personalizer():
                 self._purge_files([ctx_path])
                 del self._personalizations[ctx_path]
             # else:
-            #     logging.warning(f'unload_personalized_context: skipping unknown context: {ctx_path}')
+            #     logging.warning(f'unload_one_personalized_context: skipping unknown context: {ctx_path}')
 
 
     def _unwatch_all(self, method_ref: Callable) -> None:
@@ -631,7 +622,8 @@ class Personalizer():
                 try:
                     del target_list[d[0]]
                 except KeyError:
-                    logging.warning(f'target list does not contain item to be deleted: target context: {target_ctx_path}, target item: {d[0]}, target list: {target_list_name} = "{target_list}"')
+                    # logging.warning(f'load_one_list_context: target list does not contain item to be deleted: target context: {target_ctx_path}, target item: {d[0]}, target list: {target_list_name} = "{target_list}"')
+                    raise LoadError(f'load_one_list_context: target list does not contain item to be deleted: target context: {target_ctx_path}, target item: {d[0]}, target list: {target_list_name} = "{target_list}"')
 
         elif action.upper() == 'ADD' or action.upper() == 'REPLACE':
             additions = {}
@@ -1060,7 +1052,7 @@ class Personalizer():
         
         personal_config_folder = os.path.realpath(self.personal_config_folder)
         if not path.is_relative_to(personal_config_folder):
-            # logging.debug(f'{path.parents[:]}')
+            # logging.debug(f'{get_lines_from_csv: path.parents[:]}')
             msg = f'get_lines_from_csv: file must be in the config folder, {self.personal_config_folder}, skipping: {path_string}'
             raise Exception(msg)
 
@@ -1160,15 +1152,15 @@ class Personalizer():
         else:
             self.unload_personalizations(target_paths = [path])
 
-    def update_one_personalized_context(self, ctx_path):
+    def update_one_personalized_context(self, ctx_path: str) -> None:
         with self._personalization_mutex:
             if self.testing:
-                logging.debug(f'load_one_personalized_context: considering {ctx_path=}')
+                logging.debug(f'update_one_personalized_context: considering {ctx_path=}')
 
             # only load contexts which have been configured
             if ctx_path in self._configured_contexts:
                 if self.testing:
-                    logging.debug(f'load_one_personalized_context: {ctx_path=}')
+                    logging.debug(f'update_one_personalized_context: {ctx_path=}')
                             
                 if ctx_path.endswith('.talon'):
                     self.load_command_personalizations(target_contexts = [ctx_path])
