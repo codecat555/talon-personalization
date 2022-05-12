@@ -121,7 +121,7 @@ class FilenameError(Exception):
     pass
 
 # enabled/disable debug messages
-testing = True
+testing = False
 
 mod = Module()
 ctx = Context()
@@ -362,7 +362,7 @@ class Personalizer():
                 
     def __init__(self, mod: Module, ctx: Context, enable_setting: Any, personalization_tag_name: str, personalization_tag: Any):
         # enable/disable debug messages
-        self.testing = True
+        self.testing = testing
         
         # this code has multiple event triggers which may overlap. so, we use a mutex to make sure
         # only one copy runs at a time.
@@ -388,7 +388,7 @@ class Personalizer():
 
         # track modification times of updated files, so we reload only when needed rather than every
         # time Talon invokes the callback.
-        # WIP - this could  be implemented as a custom class, so we can transparently
+        # WIP - this could be implemented as a custom class, so we could transparently
         # WIP - handle both str and Path types as keys, interchangeably. then, we wouldn't
         # WIP - have to be so careful throughout the rest of the code (to avoid mixing them).
         self._updated_paths = {}
@@ -446,22 +446,20 @@ class Personalizer():
         #    logging.debug(f'_get_personalization_context_path_prefix: returning "{ctx_path}"')
         return ctx_path
 
-    def __del__(self) -> None:
-        if self.testing:
-            logging.debug(f'__del__: Personalizer object destruction...')
-        return
+    # WIP - I tried to eliminate the 'already freed' ResourceContext errors with this code, but it didn't work out.
+    # def __del__(self) -> None:
+    #     # if self.testing:
+    #     #     logging.debug(f'__del__: Personalizer object destruction...')
+    #     # return
         
     #     if self.testing:
     #         logging.debug(f'__del__: releasing file watches on object destruction...')
 
-    #     # try:
-    #     #     settings.unregister("", personalizer._refresh_settings)
-    #     #     registry.unregister("", personalizer._update_context)
-    #     # except:
-    #     #     logging.warning(f'__del__: unregister - {str(e)}')
 
-    #     # for method in [self._update_personalizations, self._update_config, self._monitor_config_dir]:
-    #     for method in [self._update_config, self._monitor_config_dir]:
+    #     methods = [self._update_config, self._monitor_config_dir]
+    #     if monitor_filesystem_for_updates:
+    #         methods.append(self._update_personalizations)
+    #     for method in methods:
     #         try:
     #             self._unwatch_all(method)
     #         except Exception as e:
@@ -499,7 +497,7 @@ class Personalizer():
         with self._personalization_mutex:
             if is_matching_ctx:
                 # _get_fs_path_for_context() returns a list of str
-                target_paths = [self._get_fs_path_for_context(ctx_path) for ctx_path in self._personalizations]
+                target_paths = [self.get_personalizations(ctx_path)._get_fs_path_for_context() for ctx_path in self._personalizations]
 
             if target_paths:
                 for file_path in target_paths:
@@ -999,7 +997,8 @@ class Personalizer():
             target_contexts = self._personalizations.keys()
             
         for ctx_path in target_contexts:
-            logging.debug(f'generate_files: {ctx_path=}')
+            if self.testing:
+                logging.debug(f'generate_files: {ctx_path=}')
 
             filepath_prefix = self.get_personal_filepath_prefix(ctx_path)
             personal_context = self.get_personalizations(ctx_path)
@@ -1188,10 +1187,10 @@ class Personalizer():
         if self.testing:
             logging.debug(f'_update_config: STARTING - {path, flags}')
 
-        # WIP - reload as many times as Talon tells us to, regardless of whether the
-        # WIP - file is actually modified or not.
-        # modified = True or self._is_modified(path)
         modified = self._is_modified(path)
+        # WIP - uncomment to reload as many times as Talon tells us to, regardless of whether
+        # WIP - the file is actually modified or not.
+        # modified = True or self._is_modified(path)
         if not modified:
             return
 
@@ -1310,21 +1309,15 @@ class Personalizer():
 
     def _update_context(self, action: str, arg: Any = None) -> None:
         # if self.testing:
-        #     logging.debug(f'_update_context: {self, action, arg}')
+        #     # logging.debug(f'_update_context: {self, action, arg}')
+        #     logging.debug(f'_update_context: {self, action}')
         ctx_path = None
         if action == "add_context" or action == "remove_context":
             ctx_path = arg.path
 
-            # if ctx_path == self._ctx.path:
-            #     # skip changes for the context of this module, leads to filesystem recursion...
-            #     # if self.testing:
-            #     #     logging.debug(f'_update_context: skipping own context: {ctx_path}')
-            #     return
-
             # personalized contexts should be rejected by the check below because they should
             # never make it into self._configured_contexts, but we check here anyways just to
             # be sure and keep the log from getting cluttered with such messages.
-            # WIP - change this to cover the entire personalizations folder
             if ctx_path.startswith(self.personalization_context_path_prefix):
                 # skip changes for personalized contexts
                 if self.testing:
@@ -1343,8 +1336,8 @@ class Personalizer():
                 self.update_one_personalized_context(ctx_path)
             elif action == "remove_context":
                 self.unload_one_personalized_context(ctx_path)
-            # elif action == "update_lists":
-            #     pass
+        # elif action == "update_lists":
+        #     pass
 
 def on_ready() -> None:
     """Callback method for updating personalizations."""
