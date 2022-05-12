@@ -139,7 +139,8 @@ personalization_tag = mod.tag(personalization_tag_name, desc='enable personaliza
 # we have two mutually exclusive ways of monitoring for updates, neither of them
 # really work at this time, unfortunately...
 monitor_registry_for_updates = False
-monitor_filesystem_for_updates = not monitor_registry_for_updates
+# monitor_filesystem_for_updates = not monitor_registry_for_updates
+monitor_filesystem_for_updates = False
 
 class Personalizer():
     
