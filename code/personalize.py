@@ -121,7 +121,7 @@ class FilenameError(Exception):
     pass
 
 # enabled/disable debug messages
-testing = False
+# testing = False
 
 mod = Module()
 ctx = Context()
@@ -130,7 +130,14 @@ enable_setting = mod.setting(
     "enable_personalization",
     type=bool,
     default=False,
-    desc="Whether to enable the personalizations defined by the CSV files in the settings folder.",
+    desc="Enable personalizations, process the configuration files and generate personalized files accordingly.",
+)
+
+verbose_setting = mod.setting(
+    "verbose_personalization",
+    type=bool,
+    default=False,
+    desc="Enable debug messages in the Talon log.",
 )
 
 personalization_tag_name = 'personalization'
@@ -145,13 +152,43 @@ monitor_filesystem_for_updates = False
 class Personalizer():
     
     class PersonalContext():
-        def __init__(self, ctx_path: str):
+        def __init__(self, ctx_path: str, personalizer: Any, settings_map: Dict):
             if not ctx_path in registry.contexts:
                 raise Exception(f'__init__: cannot redefine a context that does not exist: "{ctx_path}"')
 
+            # ref to parent
+            self.personalizer: Personalizer = personalizer
+
             self.ctx_path = ctx_path
 
-            self.testing = testing
+            self._testing = None
+
+            self.settings_map = settings_map
+            self.refresh_map =  {
+                talon_setting.path: local_name
+                    for local_name, talon_setting in settings_map.items()
+                                                        if hasattr(self, local_name) }
+
+        @property
+        def testing(self):
+            if self._testing is None:
+                self._testing = self.settings_map['testing'].get()
+            return self._testing
+
+        @testing.setter
+        def testing(self, value):
+            self._testing = value
+
+        # update settings
+        def refresh_settings(self, args):
+            # if self.testing:
+            #     logging.debug(f'Personalizer.PersonalContext.refresh_settings: {args=}')
+
+            caller_id = 'Personalizer.PersonalContext(' + self.ctx_path + ')'
+            if args:
+                self.personalizer._update_setting(self, caller_id, args)
+            else:
+                self.personalizer._update_all_settings(self, caller_id)
 
         def _personalize_match_string(self, tag: str) -> str:
             """Internal function to add personalization tag to the context match string."""
@@ -212,8 +249,8 @@ class Personalizer():
             return path
             
     class PersonalListContext(PersonalContext):
-        def __init__(self, ctx_path: str):
-            super().__init__(ctx_path)
+        def __init__(self, ctx_path: str, personalizer: Any, settings_map: Dict):
+            super().__init__(ctx_path, personalizer, settings_map)
 
             self.lists = {}
 
@@ -268,8 +305,8 @@ class Personalizer():
             print(f'ctx.matches = """{new_match_string}"""\n', file=f)
 
     class PersonalCommandContext(PersonalContext):
-        def __init__(self, ctx_path: str):
-            super().__init__(ctx_path)
+        def __init__(self, ctx_path: str, personalizer: Any, settings_map: Dict):
+            super().__init__(ctx_path, personalizer, settings_map)
 
             if self.testing:
                    logging.debug(f'__init__: loading commands from registry for context {ctx_path}')
@@ -361,9 +398,11 @@ class Personalizer():
                 print(line, file=f, end='')
             print(file=f)
                 
-    def __init__(self, mod: Module, ctx: Context, enable_setting: Any, personalization_tag_name: str, personalization_tag: Any):
-        # enable/disable debug messages
-        self.testing = testing
+    def __init__(self, mod: Module, ctx: Context, settings_map: Dict, personalization_tag_name: str, personalization_tag: Any):
+        # # enable/disable debug messages
+        self._testing = None
+
+        self._enabled = None
         
         # this code has multiple event triggers which may overlap. so, we use a mutex to make sure
         # only one copy runs at a time.
@@ -372,7 +411,6 @@ class Personalizer():
         # capture args
         self._mod = mod
         self._ctx = ctx        
-        self.enable_setting = enable_setting
 
         # the tag used to enable/disable personalized contexts
         # self.personalization_tag_name = 'personalization'
@@ -440,44 +478,94 @@ class Personalizer():
         # tag for personalized context matches
         self.tag_expression = f'tag: {self.personalization_tag_name_qualified}'
 
-    # WIP - I tried to eliminate the 'already freed' ResourceContext errors with this code, but it didn't work out.
-    # def __del__(self) -> None:
-    #     # if self.testing:
-    #     #     logging.debug(f'__del__: Personalizer object destruction...')
-    #     # return
+        # process settings
+        self.settings_map = settings_map
+        self.refresh_map =  {
+                talon_setting.path: local_name
+                            for local_name, talon_setting in settings_map.items()
+                                                                if hasattr(self, local_name) }
+        self.refresh_settings()
+        # catch updates
+        settings.register("", self.refresh_settings)
+
+    @property
+    def enabled(self):
+        if self._enabled is None:
+            self._enabled = self.settings_map['enabled'].get()
+            
+        return self._enabled
         
-    #     if self.testing:
-    #         logging.debug(f'__del__: releasing file watches on object destruction...')
+    @enabled.setter
+    def enabled(self, value):
+        self._enabled = value
 
+        if self._enabled:
+            # personalizations have been enabled, load them in
+            self.load_personalizations()
+        else:
+            # personalizations have been disabled, unload them
+            self.unload_personalizations()
 
-    #     methods = [self._update_config, self._monitor_config_dir]
-    #     if monitor_filesystem_for_updates:
-    #         methods.append(self._update_personalizations)
-    #     for method in methods:
-    #         try:
-    #             self._unwatch_all(method)
-    #         except Exception as e:
-    #             logging.warning(f'__del__: unwatch - {str(e)}')
+    @property
+    def testing(self):
+        if self._testing is None:
+            self._testing = self.settings_map['testing'].get()
+        return self._testing
 
-    #     pass
-    
-    def _refresh_settings(self, target_ctx_path: str, new_value: Any) -> None:
-        """Callback for handling Talon settings changes"""
-        #if self.testing:
-        #    logging.debug(f'_refresh_settings: {target_ctx_path=}, {new_value=}')
-        if target_ctx_path == self.enable_setting.path:
-            if new_value:
-                # personalizations have been enabled, load them in
-                self.load_personalizations()
-            else:
-                # personalizations have been disabled, unload them
-                # instead, we could just disable the tag here...
-                self.unload_personalizations()
+    @testing.setter
+    def testing(self, value):
+        self._testing = value
+
+    def refresh_settings(self, *args):
+        # if self.testing:
+        #     # logging.debug(f'refresh_settings: {self.settings_map=}')
+        #     logging.debug(f'Personalizer.refresh_settings: args: {args=}')
+
+        caller_id = 'Personalizer'
+        if args:
+            Personalizer._update_setting(self, caller_id, args)
+        else:
+            Personalizer._update_all_settings(self, caller_id)
+
+        for personal_context in self._personalizations.values():
+            personal_context.refresh_settings(args)
+
+    @classmethod
+    def _update_all_settings(cls, caller, caller_id: str) -> None:
+        # fetch all our settings
+        for local_name, talon_setting in caller.settings_map.items():
+            if hasattr(caller, local_name):
+                # if caller.testing:
+                #     logging.debug(f'{caller_id}._update_all_settings: DEBUG - {caller=}, {talon_setting}, {local_name=}')
+
+                caller.__setattr__(local_name, talon_setting.get())
+
+            if caller.testing:
+                logging.debug(f'{caller_id}._update_all_settings: received updated value for {talon_setting.path}: {getattr(caller, local_name, None)}')
+
+    @classmethod
+    def _update_setting(cls, caller, caller_id: str, args):
+        # fetch updated settings
+        talon_name = args[0]
+        local_name = None
+        try:
+            local_name = caller.refresh_map[talon_name]
+        except KeyError:
+            # not one of our settings
+            return
+        else:
+            caller.__setattr__(local_name, args[1])
+        # finally:
+        #     if caller.testing:
+        #         logging.debug(f'{caller_id}._update_setting: {caller=}, {talon_name=}, {local_name=}, {type(local_name)=}')
+
+        if caller.testing:
+            logging.debug(f'{caller_id}._update_setting: received updated value for {talon_name}: {getattr(caller, local_name, None)}')
 
     def load_personalizations(self) -> None:
         """Load/unload defined personalizations, based on whether the feature is enabled or not."""
         with self._personalization_mutex:
-            if self.enable_setting.get():
+            if self.enabled:
                 self._ctx.tags = [self.personalization_tag_name_qualified]
                 self.load_list_personalizations()
                 self.load_command_personalizations()
@@ -485,7 +573,7 @@ class Personalizer():
 
                 # after we have loaded at least once, begin monitoring the config folder for changes. this
                 # covers the case where no control files exist at startup but then are added later.
-                # print(f'load_personalizations: HERE I AM - {self.personal_config_folder=}')
+                # logging.debug(f'load_personalizations: HERE I AM - {self.personal_config_folder=}')
                 self._watch(self.personal_config_folder, self._update_config)
             else:
                 self._ctx.tags = []
@@ -601,7 +689,7 @@ class Personalizer():
         
         except FileNotFoundError as e:
             # below check is necessary because the inner try blocks above do not catch this error
-            # completely...something's odd about the way talon is handling these exceptions.
+            # completely...something's odd about the way Talon is handling these exceptions.
             logging.warning(f'load_list_personalizations: setting "{self.enable_setting.path}" is enabled, but personalization config file does not exist: "{e.filename}"')
 
     def load_one_list_context(self, action: str, target_ctx_path: str, target_list_name: List[str], config_file_path: str) -> None:
@@ -694,7 +782,6 @@ class Personalizer():
 
                 # determine the CSV file path, check error cases and establish config file watches
                 # use str, not Path
-
                 nominal_config_file_path = str(self.personal_config_folder / self.personal_command_folder_name / config_file_name)
                 config_file_path = os.path.realpath(nominal_config_file_path)
                 if os.path.exists(config_file_path):
@@ -957,9 +1044,9 @@ class Personalizer():
         """Return personalizations for given context path"""
         if not context_path in self._personalizations:
             if context_path.endswith('.talon'):
-                self._personalizations[context_path] = self.PersonalCommandContext(context_path)
+                self._personalizations[context_path] = self.PersonalCommandContext(context_path, self, self.settings_map)
             else:
-                self._personalizations[context_path] = self.PersonalListContext(context_path)
+                self._personalizations[context_path] = self.PersonalListContext(context_path, self, self.settings_map)
 
         return self._personalizations[context_path]
 
@@ -1344,12 +1431,17 @@ def on_ready() -> None:
     """Callback method for updating personalizations."""
     global personalizer
 
-    personalizer = Personalizer(mod, ctx, enable_setting, personalization_tag_name, personalization_tag)
+    personalizer_settings = {
+        'enabled': enable_setting,
+        'testing': verbose_setting
+    }
+
+    personalizer = Personalizer(mod, ctx, personalizer_settings, personalization_tag_name, personalization_tag)
 
     personalizer.load_personalizations()
 
     # catch updates
-    settings.register("", personalizer._refresh_settings)
+    # settings.register("", personalizer._refresh_settings)
     
     if monitor_registry_for_updates:
         registry.register("", personalizer._update_context)
