@@ -864,7 +864,7 @@ class Personalizer():
                 k = row[0]
                 commands.remove(k)
             
-        elif action.upper() == 'REPLACE':
+        elif action.upper() == 'ADD' or action.upper() == 'REPLACE':
             try:
                 # load items from source file
                 for row in self._load_count_items_per_row(2, config_file_path):
@@ -878,7 +878,8 @@ class Personalizer():
                         raise LoadError(f'cannot replace a command that does not exist, skipping: "{target_command}"')
                     
                     # record changes
-                    commands.remove(target_command)
+                    if action.upper() == 'REPLACE':            
+                        commands.remove(target_command)
                     commands.replace(replacement_command, impl)
             except ItemCountError:
                 raise LoadError(f'files containing additions must have just two values per line, skipping entire file: "{config_file_path}"')
@@ -1376,8 +1377,8 @@ class Personalizer():
             # WIP - though the file has not actually been changed. not sure why this is happening. An example -
             # WIP -
             # WIP - First time callback invoked after adding command config file - testfile_additions.csv. Note that ADD is
-            # WIP - not supported for command customization, but that is beside the point. The odd thing here is that the
-            # WIP - timestamp changes when I know the file was not actually modified during this (brief) period.
+            # WIP - not currently supported for command customization, but that is beside the point. The odd thing here is
+            # WIP - that the timestamp changes when I know the file was not actually modified during this (brief) period.
             # WIP - 
             # WIP - 2022-05-05 11:45:06 DEBUG _update_config: STARTING - ('C:\\Users\\xxx\\AppData\\Roaming\\talon\\user\\personalization\\config\\command_personalization\\testfile_additions.csv', FsEventFlags(exists=True, renamed=False))
             # WIP - 2022-05-05 11:45:06 DEBUG _is_modified: current timestamp: 1651776306.2653105
