@@ -149,9 +149,22 @@ monitor_registry_for_updates = True
 # monitor_filesystem_for_updates = not monitor_registry_for_updates
 monitor_filesystem_for_updates = False
 
+@mod.action_class
+class PersonalizationActions:
+    """
+    # Commands for controlling this personalization feature.
+    """
+    def reload_personalizations() -> None:
+        "Regenerate personalized contexts from source files."
+        personalizer.unload_personalizations()
+        personalizer.load_personalizations()
+        
 class Personalizer():
-    
+    """Generate personalized Talon contexts from source and configuration files."""
+
     class PersonalContext():
+        """A personalized Talon context."""
+        
         def __init__(self, ctx_path: str, personalizer: Any, settings_map: Dict):
             if not ctx_path in registry.contexts:
                 raise Exception(f'__init__: cannot redefine a context that does not exist: "{ctx_path}"')
@@ -249,6 +262,8 @@ class Personalizer():
             return path
             
     class PersonalListContext(PersonalContext):
+        """A personalized Talon list context."""
+
         def __init__(self, ctx_path: str, personalizer: Any, settings_map: Dict):
             super().__init__(ctx_path, personalizer, settings_map)
 
@@ -305,6 +320,8 @@ class Personalizer():
             print(f'ctx.matches = """{new_match_string}"""\n', file=f)
 
     class PersonalCommandContext(PersonalContext):
+        """A personalized Talon command context."""
+        
         def __init__(self, ctx_path: str, personalizer: Any, settings_map: Dict):
             super().__init__(ctx_path, personalizer, settings_map)
 
