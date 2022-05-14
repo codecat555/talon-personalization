@@ -145,7 +145,7 @@ personalization_tag = mod.tag(personalization_tag_name, desc='enable personaliza
 
 # we have two mutually exclusive ways of monitoring for updates, neither of them
 # really work at this time, unfortunately...
-monitor_registry_for_updates = False
+monitor_registry_for_updates = True
 # monitor_filesystem_for_updates = not monitor_registry_for_updates
 monitor_filesystem_for_updates = False
 
@@ -540,8 +540,7 @@ class Personalizer():
 
                 caller.__setattr__(local_name, talon_setting.get())
 
-            if caller.testing:
-                logging.debug(f'{caller_id}._update_all_settings: received updated value for {talon_setting.path}: {getattr(caller, local_name, None)}')
+            logging.info(f'{caller_id}._update_all_settings: received updated value for {talon_setting.path}: {getattr(caller, local_name, None)}')
 
     @classmethod
     def _update_setting(cls, caller, caller_id: str, args):
@@ -559,8 +558,7 @@ class Personalizer():
         #     if caller.testing:
         #         logging.debug(f'{caller_id}._update_setting: {caller=}, {talon_name=}, {local_name=}, {type(local_name)=}')
 
-        if caller.testing:
-            logging.debug(f'{caller_id}._update_setting: received updated value for {talon_name}: {getattr(caller, local_name, None)}')
+        logging.info(f'{caller_id}._update_setting: received updated value for {talon_name}: {getattr(caller, local_name, None)}')
 
     def load_personalizations(self) -> None:
         """Load/unload defined personalizations, based on whether the feature is enabled or not."""
