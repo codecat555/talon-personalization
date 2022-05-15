@@ -27,7 +27,7 @@ There are a number of things you should be aware of before using this code:
 1. This module should be considered to be a *stopgap* measure. At some point in the (*possibly near*) future, Talon will have a new plugin architecture which will make this code obsolete.  
 On the plus side, however, having your customizations clearly defined in a set of simple configuration files should make it easy to migrate over to the new schema. If this approach becomes popular, there will certainly be programs available for automatically migrating your customizations when the time comes.
 
-1. As of this writing, this code works with current versions of Talon. However, it makes use of various Talon interfaces that may not be supported in future versions of Talon. There is no guarantee this feature will continue to work properly as Talon evolves.
+1. As of this writing, this code works with current (beta) versions of Talon. However, it makes use of various Talon interfaces that may not be supported in future versions of Talon. There is no guarantee this feature will continue to work properly as Talon evolves.
 
 1. While this module makes some things simpler, it does require some study to get up and running. Frankly, the Talon file syntax for defining *commands* is not that hard to learn. The same is essentially true for Talon *lists*, even though they are (currently) defined in Python code modules. You might want to skip this and just follow the customization guide mentioned above.  
 Or, you could use this module to generate the customizations you want and then turn it off so you can begin managing those files yourself (but see the [General Benefits](#General-Benefits) section first).
@@ -36,7 +36,7 @@ Or, you could use this module to generate the customizations you want and then t
 
 1. This is new code, there will be bugs. I've tested using the beta version of Talon running on Windows and on Linux, but I know I haven't covered all the many possible cases. Caveat emptor.
 
-1. Currently, this module does not explicitly support the case where a Talon Python file defines more than one context. I'd like to hear about any cases where someone couldn't override a list due to this limitation.
+1. Currently, this module does not explicitly support the case where a Talon Python file defines more than one context. *I'd like to hear about any cases where someone couldn't override a list due to this limitation.*
 
 ## Installation
 
@@ -60,10 +60,10 @@ The following settings are supported:
 
 ### How to Refresh Your Personalizations After Source File Changes
 
-Until the automatic refresh mechanism is working, you will need to refresh your personalizations manually. This can be done in several different ways:
+Until the automatic refresh mechanism is working, you will need to refresh your personalizations manually whenever the corresponding source files change. This can be done in several different ways:
 
 * Restart Talon.
-* Used the `personalize` voice command provided with this module, see [personalization.talon](https://github.com/codecat555/talon-personalization/blob/main/personalization.talon) file in the Talon user folder where you placed this module.
+* Using the `personalize` voice command provided with this module, see [personalization.talon](https://github.com/codecat555/talon-personalization/blob/main/personalization.talon) file in the Talon user folder where you placed this module.
 * Disable and then re-enable this feature using the Talon setting, `user.enable_personalization`. See the [settings.talon](https://github.com/codecat555/talon-personalization/blob/main/settings.talon) file in the Talon user folder where you placed this module.
 * Updating the timestamp on any of the config files will also trigger a reload for the corresponding set of personalizations (*commands* or *lists*).
 
@@ -81,11 +81,11 @@ There are only three special characters:
 
 * comma, which is used to separate multiple values on the same line.
 * newline, which is used to separate one line from another.
-* backslash, which is placed before a comma to have it interpreted as data rather than as a separator.
+* backslash, which is placed before a comma to have it interpreted as data rather than as a field separator.
 
 ### Config Folder Hierarchy
 
-On startup, this module expects to find a folder called `config` in the Talon user folder where you placed this module. It will be created if it does not already exist.
+On startup, this module expects to find a folder named `config` in the Talon user folder where you placed this module. It will be created if it does not already exist.
 
 Under the `config` folder, the module creates two sub-folders, called `list_personalizations` and `command_personalizations` - these two folders are where you need to put your configuration files, depending on whether you want to customize *lists* or *commands* (or both).
 
@@ -111,16 +111,16 @@ The first field, `action`, may be `ADD`, `DELETE`, or `REPLACE`:
 
 | Action | Description |
 | ------ | ----------- |
-| `ADD`   | The key,value pairs read from the named auxiliary file should be added to the indicated list. |
+| `ADD`   | The key,value pairs read from the named auxiliary file should be added to the indicated list, possibly overwriting existing entries. |
 | `DELETE` | The entries read from the named auxiliary file should be deleted from the indicated list. |
 | `REPLACE` | The indicated list should be completely replaced by the entries read from the named auxiliary file, or by nothing if no file is given. |
 
 The second field specifies the path of the file containing the list that you want to personalize. This can be a full path, or it can be relative to the Talon user folder.
 
-The last field, the `auxiliary file name`, is optional for the `REPLACE` action, in which case the
+The last field, the `auxiliary file name`, is optional for the `REPLACE` action, if it is omitted the
 indicated list will simply be replaced with an empty one.
 
-The auxiliary file for the `ADD` and `REPLACE` actions *must* contain two values (*key* and *value*) on each line.
+The auxiliary file for the `ADD` and `REPLACE` actions *must* contain two values (*original value* and *new value*) on each line.
 
 The auxiliary file for the `DELETE` action *must* contain a single value on each line, indicating one key in the source list that should be deleted.
 
@@ -199,9 +199,9 @@ The auxiliary file for the `DELETE` action must contain a single value on each l
 
 Suppose you want to redefine a command. Maybe the definition used in [knausj_talon](https://github.com/knausj85/knausj_talon) does not recognize well for you. Or, you may want to replace the english language definition with one in some other language.
 
-Or, you may have conflicts between commands in one part of your user folder and commands in another. For instance, the word `word` is used in different ways in both [knausj_talon]() and in the powerful [vim support provided by fidgetingbits](https://github.com/fidgetingbits/knausj_talon). Similar issues exist for [cursorless](https://github.com/cursorless-dev) - see issue [#314](https://github.com/cursorless-dev/cursorless/discussions/314).
+Or, you may have conflicts between commands in one part of your user folder and commands in another. For instance, several words are used in different ways in both [knausj_talon]() and in the [vim support provided by fidgetingbits](https://github.com/fidgetingbits/knausj_talon/blob/master/apps/vim/doc/vim.md#initial-setup-walkthrough). Similar issues exist for [cursorless](https://github.com/cursorless-dev) - see issue [#314](https://github.com/cursorless-dev/cursorless/discussions/314).
 
-Further, suppose the command you want to redefine is located in a file named `source.talon` under your Talon user folder.
+Suppose the command you want to redefine is located in a file named `source.talon` under your Talon user folder.
 
 And, the command you want to redefine is `thing one`, which you want to replace with `thing two`.
 
@@ -217,7 +217,7 @@ And, the `source_replacements.csv` would look like this:
 thing one,thing two
 ```
 
-With this configuration, the module will create a new Talon context which will take precedence over the corresponding knausj_talon context as long as the personalization feature is enabled. This new context will ignore the `thing one` command, and respond to `thing two` just as it would have originally responded to `thing one`.
+With this configuration, the module will create a new Talon context which will take precedence over the corresponding knausj_talon context as long as the personalization feature is enabled. This new context will ignore the `thing one` command, and will respond to `thing two` just as it would have originally responded to `thing one`.
 
 If you also wanted to replace the `lorax` command with `speak for trees`, the `source_replacements.csv` file would look like this:
 
@@ -228,9 +228,9 @@ lorax,speak for trees
 
 #### Example 3 - Removing a command
 
-Building on the prior example, suppose you actually wanted to remove a command rather than replace it. Perhaps it's a command that you don't really care about and it keeps getting recognized when you try to invoke some other command.
+Building on the prior example, suppose you actually wanted to remove a command rather than replace it. Perhaps it's a command that you don't really care about and it keeps getting recognized when you are actually trying to invoke some other command.
 
-The steps for doing this are essentially is the same in the prior example, with the following differences:
+The steps for doing this are essentially the same as in the prior example, with the following differences:
 
 1. The action field in your control file would be `DELETE` rather than  `REPLACE`.
 2. The auxiliary file would contain one item per line, rather than two.
@@ -261,21 +261,21 @@ The same pattern holds for deleting items from lists as well.
 
 ### General Benefits
 
-As mentioned earlier, you can [customize *commands* and *lists* manually](https://talon.wiki/basic_customization/). It's not that hard, but you will need to keep it updated as the source files change over time.
+As mentioned earlier, you can [customize *commands* and *lists* manually](https://talon.wiki/basic_customization/). It's not that hard, but you *will* need to keep it updated as the source files change over time.
 
-So, suppose you have customized a command in knausj_talon. Subsequently, **a bug is discovered in that command that also exists in your customized copy**. When a fix is merged into the source repo, you can pull those changes into your local copy of knausj_talon. However, you will still need to update your customized copy of that command in order to benefit from the fix.
+So, suppose you have customized a command in knausj_talon. Subsequently, **a bug is discovered in that command that also exists in your customized copy**. When a fix is merged into the source repo, you can pull those changes into your local copy of knausj_talon. However, you will still need to merge those changes into your customized copy of that command in order to benefit from the fix.
 
-Or, suppose **the context header of a .talon file is updated in the source repo**. Maybe a decision is made to add more matching conditions to broaden the scope for the *commands* in that file. At that point, your personalized context may no longer have precedence. That is, the added complexity in the source file context header may cause those *commands* to be recognized instead of your customized versions.
+Or, suppose **the context header of a .talon file is updated in the source repo**. Maybe a decision is made to add more matching conditions to broaden the scope for the commands in that file. At that point, your personalized context may no longer have precedence. That is, the added complexity in the source file context header may cause those *commands* to be recognized instead of your customized versions.
 
-Neither of those issues is a problem when using this module to manage your customizations. The personalized files are generated dynamically, whenever the source files change, so any fixes present in the source file will be automatically incorporated into your personalizations.
+Neither of these issues is a problem when using this module to manage your customizations. The personalized files are regenerated completely whenever the source files change, so any fixes present in the source file will be automatically incorporated into your personalized version.
 
-The context header is also fetched from the source each time the personalized versions are generated. Then, the user.personalization tag is added, and the resulting context match will *always* be more specific than the source version. So, your personalized context will always take precedence over the corresponding source context.
+The context header is also fetched from the source each time the personalized versions are generated. Then, the user.personalization tag is added. So, the resulting context match will *always* be more specific than the source version. And, your personalized context will always take precedence over the corresponding source context.
 
-Now, if one of the source files you have personalized is renamed, or if some of that file's contents are moved to a different file, this will break those personalizations. The fix is simple - just update your control files to reflect the new source file path.
+Now, if one of the source files you have personalized is renamed, or if some of that file's contents are moved to a different file, this *will* break those personalizations. The fix is simple - just update your control files to reflect the new source file path.
 
 ### Specific Cases
 
-1. You can use the `ADD` action for *commands* to define *keyboard shortcuts*, *noise patterns* and/or *facial expressions* for *voice commands* defined elsewhere in your user folder.
+1. You can use the `ADD` action for *commands* to define *keyboard shortcuts*, *noise patterns* and/or *facial expressions* for *voice commands* defined elsewhere in your user folder. Or, vice versa.
 
 1. You might want to add non-English equivalents for English language *voice commands* defined elsewhere in your user folder. Or, vice versa. And, you can share those configuration files with others who also speak that target language.
 
@@ -283,12 +283,11 @@ Now, if one of the source files you have personalized is renamed, or if some of 
 
 1. All spreadsheets will export their data in CSV format, so maintaining your customizations can always be done using your favorite spreadsheet program.
 
-1. This module could be helpful for people wanting to port their familiar voice command sets from other systems into Talon.
+1. This module could also be helpful for people wanting to port their familiar voice command sets from other voice recognition systems into Talon.
 
 
 ### Ideas
 
 1. I thought it might be convenient to add an additional field to the control file lines, naming a custom tag name to use for switching the resulting personalizations on and off.  
-Right now, all personalized contexts are switched using a single Talon tag, `user.personalization`. This tag could be useful for testing purposes, if nothing else.  
-I wonder if there might be other use cases for this functionality.
+Right now, all personalized contexts are switched using a single Talon tag, `user.personalization`. This mechanism could be useful for testing purposes, if nothing else, but I wonder if there might be other use cases for this functionality...
 
