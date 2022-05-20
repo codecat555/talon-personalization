@@ -93,6 +93,10 @@
 # will work...Nope, those events also arrive before the registry has been updated.
 #
 
+# Note: there can be a problem redefining things that have not yet been defined. this can
+# happen if the personalized context gets loaded before the source context (is this documented
+# on the basic customization wiki?). Not a problem with this module, since it waits for the ready
+# event and the generated personalizations are not enabled until this module switches the tag.
 
 # TODO - need to handle the case where multiple contexts are defined in the same (.py) file...if
 # the user wants to override a list in such a file, we need to figure out whether the context is the
@@ -108,6 +112,8 @@ from shutil import rmtree
 from typing import Any, List, Dict, Tuple, Callable
 import logging
 from io import IOBase
+import re
+import tempfile
 
 from talon import Context, registry, app, Module, settings, actions, fs
 
@@ -120,7 +126,7 @@ class ItemCountError(Exception):
 class FilenameError(Exception):
     pass
 
-# enabled/disable debug messages
+# enable/disable debug messages
 # testing = False
 
 mod = Module()
@@ -159,6 +165,110 @@ class PersonalizationActions:
         personalizer.unload_personalizations()
         personalizer.load_personalizations()
         
+    def show_talon_list_report(list_phrase: str) -> None:
+        "Generate a basic report showing information about lists (partially) matching the given keywords."
+
+        lists = [l for l in registry.lists.keys() if list_phrase in l]
+        if not lists:
+            app.notify(f'No lists found matching {list_phrase}.')
+            return
+
+        data = {}
+        for list_name in lists:
+            is_simple_list = all([k == v for k,v in registry.lists[list_name][0].items()])
+
+            # scan the registry contexts for definitions of the list and for commands that reference the list.
+            list_data = {}
+            for context_path, context in registry.contexts.items():
+                if list_name in context.lists.keys():
+                    # found a matching context
+
+                    if not 'defines' in list_data:
+                        # initialize defines
+                        list_data['defines'] = []
+
+                    # capture the fact that this context (re-)defines the list
+                    list_data['defines'].append(context_path)
+
+                if context_path.endswith('.talon'):
+                    # fetch matching commands
+                    commands = [v for v in context.commands.values() if '{' + list_name + '}' in v.rule.rule]
+                    if commands:
+                        if not 'commands' in list_data:
+                            # initialize commands
+                            list_data['commands'] = {}
+
+                        # capture the commands for this context
+                        list_data['commands'][context_path] = commands
+
+            # scan the registry captures for references to the list
+            list_ref = '{' + list_name + '}'
+            for v in registry.captures.values():
+                rule = v[0].rule.rule
+                if list_ref in rule:
+                    # found matching capture
+                    
+                    if not 'captures' in list_data:
+                        # initialize captures
+                        list_data['captures'] = {}
+                        
+                    context_path = v[0].rule.ref.path
+                    if not context_path in list_data['captures']:
+                        # initialize captures for this context
+                        list_data['captures'][context_path] = []
+                        
+                    # capture the captures for this context
+                    list_data['captures'][context_path].append(v[0])
+
+            # save the accumulated data for this list
+            data[list_name] = list_data
+
+        # print report to a temp file
+        handle, path = tempfile.mkstemp(suffix='.txt', text=True)
+        with os.fdopen(handle, "w") as fp:
+            pp = pprint.PrettyPrinter(indent=4)
+            print(pp.pformat(data), file=fp)
+            for list_name, list_data in data.items():
+                print(f'Talon List Report for "{list_name}"\n', file=fp)
+                
+                if not list_data:
+                    print(f'--> NO REFERENCES FOUND FOR THIS LIST\n\n', file=fp)
+                    continue
+                    
+                if 'defines' in list_data:
+                    print(f'* The list is defined in the following modules/contexts:\n', file=fp)
+                    for context_path in list_data['defines']:
+                        print(f'    {context_path}', file=fp)
+                    print('\n', file=fp)
+                
+                if 'captures' in list_data:
+                    print(f'* The list is referenced in the following captures:\n', file=fp)
+                    for context_path, captures in list_data['captures'].items():
+                        print(f'    Context: {context_path}', file=fp)
+                        for capture in captures:
+                            print(f'        Path: {capture.path} ==> Rule: {capture.rule.rule}', file=fp)
+                        print('\n', file=fp)
+                    print('\n', file=fp)
+
+                if 'commands' in list_data:
+                    print(f'* The list is referenced by the following commands:\n', file=fp)
+                    for context_path, commands in list_data['commands'].items():
+                        print(f'    Context: {context_path}', file=fp)
+                        for command in commands:
+                            print(f'        {command.rule.rule}', file=fp)
+                        print('\n', file=fp)
+                    print('\n', file=fp)
+
+        # open the temp file using default app
+        if app.platform == "windows":
+            os.startfile(path, 'open')
+        elif app.platform == "mac":
+            ui.launch(path='open', args=[str(path)])
+        elif app.platform == "linux":
+            ui.launch(path='/usr/bin/xdg-open', args=[str(path)])
+        else:
+            raise Exception(f'unknown system: {app.platform}')
+
 class Personalizer():
     """Generate personalized Talon contexts from source and configuration files."""
 
@@ -446,7 +556,7 @@ class Personalizer():
         # time Talon invokes the callback.
         # WIP - this could be implemented as a custom class, so we could transparently
         # WIP - handle both str and Path types as keys, interchangeably. then, we wouldn't
-        # WIP - have to be so careful throughout the rest of the code (to avoid mixing them).
+        # WIP - have to be so careful to avoid mixing them throughout the rest of the code.
         self._updated_paths = {}
 
         self.control_file_name = 'control.csv'
@@ -577,23 +687,26 @@ class Personalizer():
 
         logging.info(f'{caller_id}._update_setting: received updated value for {talon_name}: {getattr(caller, local_name, None)}')
 
-    def load_personalizations(self) -> None:
-        """Load/unload defined personalizations, based on whether the feature is enabled or not."""
+    def startup(self) -> None:
+        """Load/unload personalizations, based on whether the feature is enabled or not."""
         with self._personalization_mutex:
             if self.enabled:
-                self._ctx.tags = [self.personalization_tag_name_qualified]
-                self.load_list_personalizations()
-                self.load_command_personalizations()
-                self.generate_files()
-
-                # after we have loaded at least once, begin monitoring the config folder for changes. this
-                # covers the case where no control files exist at startup but then are added later.
-                # logging.debug(f'load_personalizations: HERE I AM - {self.personal_config_folder=}')
-                self._watch(self.personal_config_folder, self._update_config)
+                self.load_personalizations()
             else:
-                self._ctx.tags = []
                 self.unload_personalizations()
-                return
+
+    def load_personalizations(self) -> None:
+        """Load defined personalizations."""
+        with self._personalization_mutex:
+            self._ctx.tags = [self.personalization_tag_name_qualified]
+            self.load_list_personalizations()
+            self.load_command_personalizations()
+            self.generate_files()
+
+            # after we have loaded at least once, begin monitoring the config folder for changes. this
+            # covers the case where no control files exist at startup but then are added later.
+            # logging.debug(f'load_personalizations: HERE I AM - {self.personal_config_folder=}')
+            self._watch(self.personal_config_folder, self._update_config)
 
     def load_list_personalizations(self, target_contexts: List[str] = [], target_config_paths: List[str] = [], updated_contexts: List[str] = None) -> None:
         """Load some (or all) defined list personalizations."""
@@ -634,7 +747,14 @@ class Personalizer():
             for action, source_file_path, target_list_name, *remainder in self._get_config_lines(control_file, escapechar=None):
                 line_number += 1
 
+                if Path(source_file_path).is_relative_to(self.personal_folder_path):
+                    logging.error(f'load_list_personalizations: cannot personalize personalized files, skipping: "{source_file_path}"')
+                    continue
+
                 target_ctx_path = self._get_context_from_path(source_file_path)
+
+                # handle mapping of 'self' to 'user' 
+                target_list_name = re.sub(r"^self\.", "user.", target_list_name)
 
                 # determine the CSV file path, check error cases and establish config file watches
                 config_file_path = None
@@ -735,12 +855,24 @@ class Personalizer():
                     # logging.warning(f'load_one_list_context: target list does not contain item to be deleted: target context: {target_ctx_path}, target item: {d[0]}, target list: {target_list_name} = "{target_list}"')
                     raise LoadError(f'load_one_list_context: target list does not contain item to be deleted: target context: {target_ctx_path}, target item: {d[0]}, target list: {target_list_name} = "{target_list}"')
 
-        elif action.upper() == 'ADD' or action.upper() == 'REPLACE':
+        elif action.upper() == 'ADD' or action.upper() == 'REPLACE' or action.upper() == 'REPLACE_KEY':
             additions = {}
             if config_file_path:  # some REPLACE entries may not have filenames, and that's okay
                 try:
                     for row in self._load_count_items_per_row(2, config_file_path):
-                        additions[ row[0] ] = row[1]
+                        if action.upper() == 'ADD':
+                            # assign key to value
+                            additions[ row[0] ] = row[1]
+                        elif action.upper() == 'REPLACE_KEY':
+                            old_key = row[0]
+                            new_key = row[1]
+                            try:
+                                # assign value for old key to new key
+                                additions[new_key] = target_list[old_key]
+                                # remove old key
+                                del target_list[old_key]
+                            except KeyError:
+                                raise LoadError(f'cannot replace a key that does not exist in the target list, skipping: "{old_key}"')
                 except ItemCountError:
                     raise LoadError(f'files containing additions must have just two values per line, skipping entire file: "{config_file_path}"')
                     
@@ -749,10 +881,13 @@ class Personalizer():
             
             if action.upper() == 'REPLACE':
                 target_list.clear()
+                logging.debug(f'load_one_list_context: AFTER CLEAR - {target_list=}')
                 
             # logging.debug(f'load_one_list_context: {additions=}')
             
             target_list.update(additions)
+
+            logging.debug(f'load_one_list_context: AFTER UPDATE - {target_list=}')
         else:
             raise LoadError(f'unknown action, skipping: "{action}"')
 
@@ -793,6 +928,10 @@ class Personalizer():
             for action, source_file_path, config_file_name in self._get_config_lines(real_control_file, escapechar=None):
                 line_number += 1
 
+                if Path(source_file_path).is_relative_to(self.personal_folder_path):
+                    logging.error(f'load_command_personalizations: cannot personalize personalized files, skipping: "{source_file_path}"')
+                    continue
+                
                 target_ctx_path = self._get_context_from_path(source_file_path)
 
                 # determine the CSV file path, check error cases and establish config file watches
@@ -1008,6 +1147,9 @@ class Personalizer():
                     self._unwatch_all(self._update_personalizations)
 
                 self._purge_files()
+
+            if not self._personalizations:
+                self._ctx.tags = []                
                 
     def unload_list_personalizations(self) -> None:
         if self.testing:
@@ -1174,6 +1316,11 @@ class Personalizer():
 
     def _update_config(self, path: str, flags: Any) -> None:
         """Callback method for updating personalized contexts after changes to personalization configuration files."""
+
+        if not self.enabled:
+            # do nothing until you hear from me
+            return
+            
         if self.testing:
             logging.debug(f'_update_config: STARTING - {path, flags}')
 
@@ -1251,8 +1398,8 @@ class Personalizer():
             # be sure and keep the log from getting cluttered with such messages.
             if ctx_path.startswith(self.personalization_context_path_prefix):
                 # skip changes for personalized contexts
-                if self.testing:
-                    logging.debug(f'_update_context: skipping personalized context: {ctx_path}')
+                # if self.testing:
+                #     logging.debug(f'_update_context: skipping personalized context: {ctx_path}')
                 return
 
             if ctx_path not in self._configured_contexts:
@@ -1454,7 +1601,7 @@ def on_ready() -> None:
 
     personalizer = Personalizer(mod, ctx, personalizer_settings, personalization_tag_name, personalization_tag)
 
-    personalizer.load_personalizations()
+    personalizer.startup()
 
     # catch updates
     # settings.register("", personalizer._refresh_settings)
