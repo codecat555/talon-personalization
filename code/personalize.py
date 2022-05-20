@@ -155,7 +155,7 @@ monitor_registry_for_updates = True
 # monitor_filesystem_for_updates = not monitor_registry_for_updates
 monitor_filesystem_for_updates = False
 
-def _discover_list(list_name: str) -> Dict[str,Dict]:
+def _discover_list(list_name: str) -> Dict[str, Dict]:
     """Accumulate data about the given list and return it."""
     list_data = {}
     for context_path, context in registry.contexts.items():
@@ -239,7 +239,9 @@ def _generate_list_report(list_data: Dict) -> str:
 
         return path
 
-def _open_file(path) -> None:
+def _open_file(path: str) -> None:
+    """Open the given file in the default application."""
+    
     if app.platform == "windows":
         os.startfile(path, 'open')
     elif app.platform == "mac":
@@ -248,7 +250,7 @@ def _open_file(path) -> None:
         ui.launch(path='/usr/bin/xdg-open', args=[str(path)])
     else:
         raise Exception(f'unknown system: {app.platform}')
-        
+
 @mod.action_class
 class PersonalizationActions:
     """
