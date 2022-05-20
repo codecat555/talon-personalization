@@ -155,6 +155,100 @@ monitor_registry_for_updates = True
 # monitor_filesystem_for_updates = not monitor_registry_for_updates
 monitor_filesystem_for_updates = False
 
+def _discover_list(list_name: str) -> Dict[str,Dict]:
+    """Accumulate data about the given list and return it."""
+    list_data = {}
+    for context_path, context in registry.contexts.items():
+        if list_name in context.lists.keys():
+            # found a matching context
+
+            if not 'defines' in list_data:
+                # initialize defines
+                list_data['defines'] = []
+
+            # capture the fact that this context (re-)defines the list
+            list_data['defines'].append(context_path)
+
+        if context_path.endswith('.talon'):
+            # fetch matching commands
+            commands = [v for v in context.commands.values() if '{' + list_name + '}' in v.rule.rule]
+            if commands:
+                if not 'commands' in list_data:
+                    # initialize commands
+                    list_data['commands'] = {}
+
+                # capture the commands for this context
+                list_data['commands'][context_path] = commands
+
+        # scan the registry captures for references to the list
+        list_ref = '{' + list_name + '}'
+        for v in registry.captures.values():
+            rule = v[0].rule.rule
+            if list_ref in rule:
+                # found matching capture
+                
+                if not 'captures' in list_data:
+                    # initialize captures
+                    list_data['captures'] = {}
+                    
+                context_path = v[0].rule.ref.path
+                if not context_path in list_data['captures']:
+                    # initialize captures for this context
+                    list_data['captures'][context_path] = set()
+                    
+                # capture the captures for this context
+                list_data['captures'][context_path].add(v[0])
+
+    return list_data
+
+def _generate_list_report(list_data: Dict) -> str:
+    handle, path = tempfile.mkstemp(suffix='.txt', text=True)
+    with os.fdopen(handle, "w") as fp:
+        pp = pprint.PrettyPrinter(indent=4)
+        print(pp.pformat(list_data), file=fp)
+        for list_name, list_data in list_data.items():
+            print(f'Talon List Report for "{list_name}"\n', file=fp)
+            
+            if not list_data:
+                print(f'--> NO REFERENCES FOUND FOR THIS LIST\n\n', file=fp)
+                continue
+                
+            if 'defines' in list_data:
+                print(f'* The list is defined in the following modules/contexts:\n', file=fp)
+                for context_path in list_data['defines']:
+                    print(f'    {context_path}', file=fp)
+                print('\n', file=fp)
+            
+            if 'captures' in list_data:
+                print(f'* The list is referenced in the following captures:\n', file=fp)
+                for context_path, captures in list_data['captures'].items():
+                    print(f'    Context: {context_path}', file=fp)
+                    for capture in captures:
+                        print(f'        Path: {capture.path} ==> Rule: {capture.rule.rule}', file=fp)
+                    print('\n', file=fp)
+                print('\n', file=fp)
+
+            if 'commands' in list_data:
+                print(f'* The list is referenced by the following commands:\n', file=fp)
+                for context_path, commands in list_data['commands'].items():
+                    print(f'    Context: {context_path}', file=fp)
+                    for command in commands:
+                        print(f'        {command.rule.rule}', file=fp)
+                    print('\n', file=fp)
+                print('\n', file=fp)
+
+        return path
+
+def _open_file(path) -> None:
+    if app.platform == "windows":
+        os.startfile(path, 'open')
+    elif app.platform == "mac":
+        ui.launch(path='open', args=[str(path)])
+    elif app.platform == "linux":
+        ui.launch(path='/usr/bin/xdg-open', args=[str(path)])
+    else:
+        raise Exception(f'unknown system: {app.platform}')
+        
 @mod.action_class
 class PersonalizationActions:
     """
@@ -165,109 +259,31 @@ class PersonalizationActions:
         personalizer.unload_personalizations()
         personalizer.load_personalizations()
         
-    def show_talon_list_report(list_phrase: str) -> None:
-        "Generate a basic report showing information about lists (partially) matching the given keywords."
+    def show_talon_list_report(key_phrase: str) -> None:
+        "Generate a basic report showing information about any lists which (partially) match the given key phrase."
 
-        lists = [l for l in registry.lists.keys() if list_phrase in l]
+        # gather matching lists
+        lists = [l for l in registry.lists.keys() if key_phrase in l]
         if not lists:
-            app.notify(f'No lists found matching {list_phrase}.')
+            app.notify(f'No lists found matching {key_phrase}.')
             return
 
+        # gather data about the matching lists
         data = {}
         for list_name in lists:
             is_simple_list = all([k == v for k,v in registry.lists[list_name][0].items()])
 
             # scan the registry contexts for definitions of the list and for commands that reference the list.
-            list_data = {}
-            for context_path, context in registry.contexts.items():
-                if list_name in context.lists.keys():
-                    # found a matching context
-
-                    if not 'defines' in list_data:
-                        # initialize defines
-                        list_data['defines'] = []
-
-                    # capture the fact that this context (re-)defines the list
-                    list_data['defines'].append(context_path)
-
-                if context_path.endswith('.talon'):
-                    # fetch matching commands
-                    commands = [v for v in context.commands.values() if '{' + list_name + '}' in v.rule.rule]
-                    if commands:
-                        if not 'commands' in list_data:
-                            # initialize commands
-                            list_data['commands'] = {}
-
-                        # capture the commands for this context
-                        list_data['commands'][context_path] = commands
-
-            # scan the registry captures for references to the list
-            list_ref = '{' + list_name + '}'
-            for v in registry.captures.values():
-                rule = v[0].rule.rule
-                if list_ref in rule:
-                    # found matching capture
-                    
-                    if not 'captures' in list_data:
-                        # initialize captures
-                        list_data['captures'] = {}
-                        
-                    context_path = v[0].rule.ref.path
-                    if not context_path in list_data['captures']:
-                        # initialize captures for this context
-                        list_data['captures'][context_path] = []
-                        
-                    # capture the captures for this context
-                    list_data['captures'][context_path].append(v[0])
+            list_data = _discover_list(list_name)
 
             # save the accumulated data for this list
             data[list_name] = list_data
 
         # print report to a temp file
-        handle, path = tempfile.mkstemp(suffix='.txt', text=True)
-        with os.fdopen(handle, "w") as fp:
-            pp = pprint.PrettyPrinter(indent=4)
-            print(pp.pformat(data), file=fp)
-            for list_name, list_data in data.items():
-                print(f'Talon List Report for "{list_name}"\n', file=fp)
-                
-                if not list_data:
-                    print(f'--> NO REFERENCES FOUND FOR THIS LIST\n\n', file=fp)
-                    continue
-                    
-                if 'defines' in list_data:
-                    print(f'* The list is defined in the following modules/contexts:\n', file=fp)
-                    for context_path in list_data['defines']:
-                        print(f'    {context_path}', file=fp)
-                    print('\n', file=fp)
-                
-                if 'captures' in list_data:
-                    print(f'* The list is referenced in the following captures:\n', file=fp)
-                    for context_path, captures in list_data['captures'].items():
-                        print(f'    Context: {context_path}', file=fp)
-                        for capture in captures:
-                            print(f'        Path: {capture.path} ==> Rule: {capture.rule.rule}', file=fp)
-                        print('\n', file=fp)
-                    print('\n', file=fp)
-
-                if 'commands' in list_data:
-                    print(f'* The list is referenced by the following commands:\n', file=fp)
-                    for context_path, commands in list_data['commands'].items():
-                        print(f'    Context: {context_path}', file=fp)
-                        for command in commands:
-                            print(f'        {command.rule.rule}', file=fp)
-                        print('\n', file=fp)
-                    print('\n', file=fp)
+        path = _generate_list_report(data)
 
         # open the temp file using default app
-        if app.platform == "windows":
-            os.startfile(path, 'open')
-        elif app.platform == "mac":
-            ui.launch(path='open', args=[str(path)])
-        elif app.platform == "linux":
-            ui.launch(path='/usr/bin/xdg-open', args=[str(path)])
-        else:
-            raise Exception(f'unknown system: {app.platform}')
+        _open_file(path)
 
 class Personalizer():
     """Generate personalized Talon contexts from source and configuration files."""
