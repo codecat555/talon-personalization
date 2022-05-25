@@ -10,7 +10,7 @@ Among other things, eliminating the need for git expertise makes Talon - and the
 
 As discussed below, this approach also provides other benefits for *anyone* who uses Talon, regardless of their level of technical expertise.
 
-**Note:** [The Talon wiki has a comprehensive guide on how to customize your configuration while avoiding git merge headaches](https://talon.wiki/basic_customization/). You might want to understand that material before deciding whether to try using this module instead. It comes down to whether you prefer managing the config files for this module versus managing the Talon and Python files yourself. However, there are other considerations - see the [Caveats](#Caveats) section and the [Applications and Benefits](#Applications-and-Benefits) section below.
+**Note:** [The Talon wiki has a comprehensive guide on how to customize your configuration while avoiding git merge headaches](https://talon.wiki/basic_customization/). You might want to understand that material before deciding whether to try using this module instead. It comes down to whether you prefer managing the config files for this module versus managing the Talon and Python files yourself. However, there are some tradeoffs - see the [Caveats](#Caveats) section and the [Applications and Benefits](#Applications-and-Benefits) section below.
 
 ### Why just commands and lists?
 
@@ -20,7 +20,7 @@ Talon *Lists* are also important targets for customization, with the alphabet be
 
 However, Talon *lists* are defined in Python files and that makes them less accessible for many people. At a minimum, you need to know that [Talon lists](https://talonvoice.com/docs/index.html#talon.Context.lists) are not [Python lists](https://pythongeeks.org/python-lists/). Well, then can be (sort of), but they are actually [Python dicts (dictionaries)](https://talonvoice.com/docs/index.html#talon.Context.lists). There are other considerations when modifying Talon *lists* that are discussed in more detail below.
 
-Customizing other Talon objects, such as *actions* and *captures*, require an understanding of Python programming and a deeper knowledge of how Talon works. While those sorts of changes could conceivably be managed via configuration files such as those used by this module, I think bbin the end it would be overly complicated, would still require programming knowledge and wouldn't really make much sense.
+Customizing other Talon objects, such as *actions* and *captures*, require an understanding of Python programming and a deeper knowledge of how Talon works. While those sorts of changes could conceivably be managed via configuration files such as those used by this module, I think in the end it would be overly complicated, would still require programming knowledge and wouldn't really make much sense.
 
 ## Caveats
 
@@ -31,15 +31,15 @@ On the plus side, however, having your customizations clearly defined in a set o
 
 1. As of this writing, this code works with current (beta) versions of Talon. However, it makes use of various Talon interfaces that may not be supported in future versions of Talon. I hope to keep it up to date and, if I don't, someone else can always fork my code and fix it themselves. Still, there is no guarantee this feature will continue to work properly as Talon evolves.
 
-1. While this module makes some things simpler, it does require some study (i.e. reading this page) to get up and running. Frankly, the Talon file syntax for defining *commands* is not that hard to learn. The same is essentially true for Talon *lists*, even though they are (currently) defined in Python code modules. You might want to skip this and just follow the customization guide mentioned above.  
+1. While this module makes some things simpler, it does require some study to get up and running (i.e. reading this page). Frankly, the Talon file syntax for defining *commands* is not that hard to learn. The same is essentially true for Talon *lists*, even though they are (currently) defined in Python code modules. You might want to skip this and just follow the customization guide mentioned above.  
 Or, you could use this module to generate the customizations you want and then turn it off so you can begin managing those files yourself (but see the [General Benefits](#General-Benefits) section first).
 
-1. This module allows you to change Talon lists in ways that could break the surrounding code. It's up to the user to in sure that the configured changes actually work in the broader context of things. The [talon list report tool](https://github.com/codecat555/talon_list_report) might be helpful in resolving any questions around this point.
+1. This module allows you to change Talon lists in ways that could break the surrounding code. It's up to the user to ensure that the configured changes actually work in the broader context of things. The [talon list report tool](https://github.com/codecat555/talon_list_report) might be helpful in resolving any questions around this point.
 
 1. Some Talon lists are composites of other lists and changes to one of the component lists may not be reflected in the composite.
-One example I know of is `user.symbol_key`, in `knausj_talon/code/keys.py`. The Python list that defines `user.punctuation` is also included in `user.symbol_key`; you can customize the former list, but the changes will not be reflected in the latter list. The fix is simply to apply your overrides to both lists, which can be done with separate control file lines for each of the lists, both referencing the same auxilliary file. 
+One example I know of is `user.symbol_key`, in `knausj_talon/code/keys.py`. The Python list that defines the talon list named `user.punctuation` is also included in the talon list named `user.symbol_key`. You can customize the former list, but those changes will not automatically be reflected in the latter list. The fix is simply to apply your overrides to both lists, which can be done with separate control file lines for each of the lists, both referencing the same auxilliary file. 
 
-1. In general, when working with knausj_talon, if a list is populated by a configuration (e.g. `.csv`) file then it is better to use that mechanism for customization rather than this module.
+1. In general, when working with knausj_talon, if a list is populated by a configuration file, then it is better to use that mechanism for customization rather than this module.
 
 1. The personalizations generated by this module *do not currently update automatically as the source files change*. Talon does send events for such changes and this module includes working code to handle those events. The problem is that the events arrive *before* the source changes are actually available in the Talon registry. Until this problem is fixed, in this module or elsewhere, you can [update your personalizations manually](#How-to-Refresh-Your-Personalizations-After-Source-File-Changes). 
 
