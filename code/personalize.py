@@ -194,17 +194,17 @@ class Personalizer():
                                                         if hasattr(self, local_name) }
 
         @property
-        def testing(self):
+        def testing(self) -> bool:
             if self._testing is None:
                 self._testing = self.settings_map['testing'].get()
             return self._testing
 
         @testing.setter
-        def testing(self, value):
+        def testing(self, value: bool) -> None:
             self._testing = value
 
         # update settings
-        def refresh_settings(self, args):
+        def refresh_settings(self, args) -> None:
             # if self.testing:
             #     logging.debug(f'Personalizer.PersonalContext.refresh_settings: {args=}')
 
@@ -228,47 +228,6 @@ class Personalizer():
 
             return new_match_string
             
-        def _split_context_to_user_path_and_file_name(self) -> Tuple[str, str]:
-            """Internal function for extracting filesystem path information from the context path string."""
-            
-            # if self.testing:
-            #    logging.debug(f'_split_context_to_user_path_and_file_name: {self.ctx_path=}')
-            
-            # figure out separation point between the filename and it's parent path
-            filename_idx = -1
-            if self.ctx_path.endswith('.talon'):
-                filename_idx = -2
-
-            # split context path to separate filename and parent path
-            user_path = self.ctx_path.split('.')
-
-            # extract the filename component
-            filename = '.'.join(user_path[filename_idx:])
-                
-            # extract the parent path
-            start_idx = 0
-            if user_path[0] == 'user':
-                # skip the leading 'user' bit
-                start_idx = 1
-            else:
-                raise Exception('_split_context_to_user_path_and_file_name: cannot override non-user paths at this time')
-
-            user_path = os.path.sep.join(user_path[start_idx:filename_idx])
-            
-            #if self.testing:
-            #    logging.debug(f'_split_context_to_user_path_and_file_name: got {self.ctx_path}, returning {wip, filename}')
-
-            return user_path, filename
-
-        def _get_fs_path_for_context(self) -> str:
-            """Convert given Talon context path into the equivalent filesystem path."""
-            path_prefix, filename = self._split_context_to_user_path_and_file_name()
-            path = os.path.join(actions.path.talon_user(), path_prefix, filename)
-            
-            if not self.ctx_path.endswith('.talon'):
-                path = path + '.py'
-
-            return path
             
     class PersonalListContext(PersonalContext):
         """A personalized Talon list context."""
@@ -293,18 +252,16 @@ class Personalizer():
 
             return self.lists[list_name]
                     
-        def remove(self, list_name: str):
+        def remove(self, list_name: str) -> None:
             try:
                 del self.lists[list_name]
             except KeyError as e:
                 raise Exception(f'remove: no such list: {list_name}')
                 
-        def write(self, filepath_prefix: str, tag: str, header: str):
+        def write(self, file_path: str, tag: str, header: str) -> None:
             """Generate one personalized file"""
 
             # logging.debug(f'write: {ctx_path=}, {new_match_string=}')
-
-            file_path = filepath_prefix + '.py'
 
             if self.testing:
                 logging.debug(f'write: writing list customizations to "{file_path}"...')
@@ -328,6 +285,29 @@ class Personalizer():
             new_match_string = self._personalize_match_string(tag)
             print(f'ctx.matches = """{new_match_string}"""\n', file=f)
 
+        def get_source_file_path(self) -> str:
+            """Function for extracting filesystem path information from the context path string."""
+            
+            if not self.ctx_path.startswith('user.'):
+                raise ValueError('get_source_file_path: can only handle user-defined contexts (ctx_path)')
+                
+            # if self.testing:
+            #    logging.debug(f'get_source_file_path: {ctx_path=}')
+            
+            sub_path = re.sub(r"^user\.", "", self.ctx_path).replace('.', os.path.sep)
+            # sub_path = Path(self.ctx_path.replace('.', os.path.sep))
+            # parent_path = actions.path.talon_user() / sub_path
+            parent_path = actions.path.talon_user() / Path(sub_path)
+            
+            # logging.debug(f'get_source_file_path: {parent_path=}, {ctx_path=}')
+            
+            user_path = parent_path.with_suffix('.py')
+            
+            if self.testing:
+                logging.debug(f'PersonalListContext.get_source_file_path: returning {user_path=}')
+            
+            return user_path
+
     class PersonalCommandContext(PersonalContext):
         """A personalized Talon command context."""
         
@@ -346,14 +326,13 @@ class Personalizer():
         
         def _parse_talon_file(self) -> None:
             """Internal method to extract match string and tags from the source file for a given context."""
-            path_prefix, filename = self._split_context_to_user_path_and_file_name()
-            file_path = os.path.join(actions.path.talon_user(), path_prefix, filename)
+            path = self.get_source_file_path()
             
-            # logging.debug(f'_parse_talon_file: for {ctx_path}, file is {filepath_prefix}')
+            # logging.debug(f'_parse_talon_file: {self.ctx_path=}, {path}')
             
             source_match_string = ''
             tag_calls = []
-            with open(file_path, 'r') as f:
+            with open(path, 'r') as f:
                 seen_dash = False
                 for line in f:
                     if seen_dash:
@@ -377,20 +356,20 @@ class Personalizer():
             self.source_match_string = source_match_string
             self.tag_calls = tag_calls
 
-        def remove(self, command_key: str):
+        def remove(self, command_key: str) -> None:
             try:
                 # del commands[command_key]
                 self.commands[command_key] = 'skip()'
             except KeyError as e:
                 raise Exception(f'remove: no such command: {command_key}')
                 
-        def replace(self, command_key: str, new_value: str):
+        def replace(self, command_key: str, new_value: str) -> None:
             try:
                 self.commands[command_key] = new_value
             except KeyError as e:
                 raise Exception(f'remove: no such command: {command_key}')
 
-        def write(self, file_path: str, tag: str, header: str):
+        def write(self, file_path: str, tag: str, header: str) -> None:
             """Generate one personalized file"""
 
             if self.testing:
@@ -403,7 +382,7 @@ class Personalizer():
                     
                 self._write_talon_tag_calls(f)
                     
-                # logging.debug(f'write_one_file: {command_personalizations=}')
+                # logging.debug(f'write: {command_personalizations=}')
                 for personal_command, personal_impl in self.commands.items():
                     print(f'{personal_command}:', file=f)
                     for line in personal_impl.split('\n'):
@@ -423,6 +402,32 @@ class Personalizer():
             for line in self.tag_calls:
                 print(line, file=f, end='')
             print(file=f)
+
+        def get_source_file_path(self) -> str:
+            """Function for extracting filesystem path information from the context path string."""
+            
+            if not self.ctx_path.startswith('user.'):
+                raise ValueError('get_source_file_path: can only handle user-defined contexts (ctx_path)')
+                
+            # if self.testing:
+            #    logging.debug(f'split_context_to_user_path_and_file_name: {ctx_path=}')
+            
+            sub_path = re.sub(r"^user\.", "", self.ctx_path).replace('.', os.path.sep)
+            parent_path = actions.path.talon_user() / Path(sub_path).parents[0]
+            
+            # logging.debug(f'get_source_file_path: {parent_path=}, {ctx_path=}')
+            
+            # there is a special case here: when the given context path refers to a file
+            # named 'talon.py', as in 'knausj_talon/lang/talon/talon.py'. context a.x.talon
+            # could be a/x.talon OR a/x/talon.py.
+            
+            user_path = parent_path.with_suffix('.talon')
+            
+            if self.testing:
+                logging.debug(f'PersonalCommandContext.get_source_file_path: returning {user_path=}')
+            
+            return user_path
+
                 
     def __init__(self, mod: Module, ctx: Context, settings_map: Dict, personalization_tag_name: str, personalization_tag: Any):
         # # enable/disable debug messages
@@ -515,14 +520,14 @@ class Personalizer():
         settings.register("", self.refresh_settings)
 
     @property
-    def enabled(self):
+    def enabled(self) -> bool:
         if self._enabled is None:
             self._enabled = self.settings_map['enabled'].get()
             
         return self._enabled
         
     @enabled.setter
-    def enabled(self, value):
+    def enabled(self, value) -> None:
         self._enabled = value
 
         if self._enabled:
@@ -533,16 +538,16 @@ class Personalizer():
             self.unload_personalizations()
 
     @property
-    def testing(self):
+    def testing(self) -> bool:
         if self._testing is None:
             self._testing = self.settings_map['testing'].get()
         return self._testing
 
     @testing.setter
-    def testing(self, value):
+    def testing(self, value) -> None:
         self._testing = value
 
-    def refresh_settings(self, *args):
+    def refresh_settings(self, *args) -> None:
         # if self.testing:
         #     # logging.debug(f'refresh_settings: {self.settings_map=}')
         #     logging.debug(f'Personalizer.refresh_settings: args: {args=}')
@@ -620,6 +625,9 @@ class Personalizer():
         # use str, not Path
         nominal_control_file = self.personal_config_folder / self.personal_list_control_file_subpath
         control_file = os.path.realpath(nominal_control_file)
+
+        if not os.path.exists(control_file):
+            return
         
         if self.testing:
             logging.debug(f'load_list_personalizations: loading customizations from "{control_file}"...')
@@ -634,17 +642,16 @@ class Personalizer():
             if self._is_list_config_file(path):
                 self._unwatch(path, self._update_config)
 
-        if os.path.exists(control_file):
-            self._watch(control_file, self._update_config)
-        else:
-            # nothing to do, apparently
-            return
+        self._watch(control_file, self._update_config)
             
         try:
             # loop through the control file and do the needful
             line_number = 0
             for action, source_file_path, target_list_name, *remainder in self._get_config_lines(control_file, escapechar=None):
                 line_number += 1
+
+                if self.testing:
+                    logging.debug(f'load_list_personalizations: read line {line_number}: {action=}, {source_file_path=}, {target_list_name=}, {remainder}')
 
                 if Path(source_file_path).is_relative_to(self.personal_folder_path):
                     logging.error(f'load_list_personalizations: cannot personalize personalized files, skipping: "{source_file_path}"')
@@ -766,6 +773,14 @@ class Personalizer():
                         elif action.upper() == 'REPLACE_KEY':
                             old_key = row[0]
                             new_key = row[1]
+
+                            if self.testing:
+                                logging.debug(f'load_one_list_context: REPLACE_KEY - {old_key=}, {new_key=}')
+
+                            if old_key == new_key:
+                                # nothing to do
+                                continue
+                            
                             try:
                                 # assign value for old key to new key
                                 additions[new_key] = target_list[old_key]
@@ -784,12 +799,11 @@ class Personalizer():
             
             if action.upper() == 'REPLACE':
                 target_list.clear()
-                logging.debug(f'load_one_list_context: AFTER CLEAR - {target_list=}')
-                
             
             target_list.update(additions)
 
-            logging.debug(f'load_one_list_context: AFTER UPDATE - {target_list=}')
+            if self.testing:
+                logging.debug(f'load_one_list_context: AFTER UPDATE - {target_list=}')
         else:
             raise LoadError(f'unknown action, skipping: "{action}"')
 
@@ -803,12 +817,15 @@ class Personalizer():
 
         # use str, not Path
         nominal_control_file = self.personal_config_folder / self.personal_command_control_file_subpath
-        real_control_file = os.path.realpath(nominal_control_file)
+        control_file = os.path.realpath(nominal_control_file)
 
-        if self.testing:
-            logging.debug(f'load_command_personalizations: loading customizations from "{real_control_file}"...')
+        if not os.path.exists(control_file):
+            return
         
-        if target_config_paths and real_control_file in target_config_paths:
+        if self.testing:
+            logging.debug(f'load_command_personalizations: loading customizations from "{control_file}"...')
+        
+        if target_config_paths and control_file in target_config_paths:
             # if we're reloading the control file, then we're doing everything anyways
             target_config_paths = None
             
@@ -818,17 +835,16 @@ class Personalizer():
             if self._is_command_config_file(path):
                 self._unwatch(path, self._update_config)
 
-        if os.path.exists(real_control_file):
-            self._watch(real_control_file, self._update_config)
-        else:
-            # nothing to do, apparently
-            return
+        self._watch(control_file, self._update_config)
             
         try:
             # loop through the control file and do the needful
             line_number = 0
-            for action, source_file_path, config_file_name in self._get_config_lines(real_control_file, escapechar=None):
+            for action, source_file_path, config_file_name in self._get_config_lines(control_file, escapechar=None):
                 line_number += 1
+
+                if self.testing:
+                    logging.debug(f'load_command_personalizations: read line {line_number}: {action=}, {source_file_path=}, {config_file_name=}')
 
                 if Path(source_file_path).is_relative_to(self.personal_folder_path):
                     logging.error(f'load_command_personalizations: cannot personalize personalized files, skipping: "{source_file_path}"')
@@ -992,19 +1008,23 @@ class Personalizer():
 
     def generate_files(self, target_contexts: List[str] = None) -> None:
         """Generate personalization files from current metadata."""
+        
+        if not self._personalizations:
+            return
+
         if self.testing:
             logging.debug(f'generate_files: writing customizations to "{self.personal_folder_path}"...')
         
-        self._purge_files(target_contexts=target_contexts)
-
         if not target_contexts:
             target_contexts = self._personalizations.keys()
             
+        self._purge_files(target_contexts=target_contexts)
+
         for ctx_path in target_contexts:
             if self.testing:
                 logging.debug(f'generate_files: {ctx_path=}')
 
-            filepath_prefix = self.get_personalized_filepath(ctx_path)
+            filepath_prefix = self.get_personal_file_path(ctx_path)
             personal_context = self.get_personalizations(ctx_path)
             header = self.personalized_header.format(ctx_path, self.personal_folder_name)
 
@@ -1014,8 +1034,7 @@ class Personalizer():
         """Unload some (or all) personalized contexts."""
         with self._personalization_mutex:
             if is_matching_ctx:
-                # _get_fs_path_for_context() returns a list of str
-                target_paths = [self.get_personalizations(ctx_path)._get_fs_path_for_context() for ctx_path in self._personalizations]
+                target_paths = [self.get_personalizations(ctx_path).get_source_file_path() for ctx_path in self._personalizations]
 
             if target_paths:
                 for file_path in target_paths:
@@ -1040,15 +1059,17 @@ class Personalizer():
 
                         self.unload_one_personalized_context(ctx_path)
             else:
-                if self.testing:
-                    logging.debug(f'unload_personalizations: unloading everything...')
+                if self._personalizations:
 
-                self._personalizations = {}
+                    if self.testing:
+                        logging.debug(f'unload_personalizations: unloading everything...')
 
-                if monitor_filesystem_for_updates:
-                    self._unwatch_all(self._update_personalizations)
+                    self._personalizations = {}
 
-                self._purge_files()
+                    if monitor_filesystem_for_updates:
+                        self._unwatch_all(self._update_personalizations)
+
+                    self._purge_files()
 
             if not self._personalizations:
                 self._ctx.tags = []                
@@ -1057,15 +1078,15 @@ class Personalizer():
         if self.testing:
             logging.debug(f'unload_list_personalizations: starting...')
             
-        self.unload_personalizations(is_matching_ctx=lambda x: not x.endswith('.talon'))
+        self.unload_personalizations(is_matching_ctx=lambda x: not self.is_talon_file_context(x))
 
     def unload_command_personalizations(self) -> None:
         if self.testing:
             logging.debug(f'unload_command_personalizations: starting...')
 
-        self.unload_personalizations(is_matching_ctx=lambda x: x.endswith('.talon'))
+        self.unload_personalizations(is_matching_ctx=lambda x: self.is_talon_file_context(x))
 
-    def unload_one_personalized_context(self, ctx_path: str):
+    def unload_one_personalized_context(self, ctx_path: str) -> None:
         with self._personalization_mutex:
             if ctx_path in self._personalizations:
                 if self.testing:
@@ -1073,7 +1094,7 @@ class Personalizer():
 
                 if monitor_filesystem_for_updates:
                     personal_context = self.get_personalizations(ctx_path)
-                    file_path = personal_context._get_fs_path_for_context()
+                    file_path = personal_context.get_source_file_path()
                     self._unwatch(file_path, self._update_personalizations)
 
                 self._purge_files([ctx_path])
@@ -1087,7 +1108,7 @@ class Personalizer():
             if target_contexts:
                 for ctx_path in target_contexts:
                     personal_context = self.get_personalizations(ctx_path)
-                    path = personal_context._get_fs_path_for_context()
+                    path = personal_context.get_source_file_path()
                     sub_path = os.path.relpath(path, actions.path.talon_user())
                     # personal_path is a Path
                     personal_path = self.personal_folder_path / sub_path
@@ -1100,10 +1121,54 @@ class Personalizer():
                 if os.path.exists(self.personal_folder_path):
                     rmtree(self.personal_folder_path)
 
+    def get_source_file_paths(self, context_path: str) -> List[str]:
+            """Function for extracting filesystem path information from the context path string."""
+            
+            if not context_path.startswith('user.'):
+                raise ValueError('get_source_file_paths: can only handle user-defined contexts (context_path)')
+                
+            # if self.testing:
+            #    logging.debug(f'get_source_file_paths: {ctx_path=}')
+
+            sub_path = Path(re.sub(r'^user\.', '', context_path).replace('.', os.path.sep))
+            parent_path = actions.path.talon_user() / sub_path.parents[0]
+            
+            logging.debug(f'get_source_file_paths: {context_path=}, {sub_path=}, {parent_path=}')
+            
+            user_paths = []
+            if context_path.endswith('.talon'):
+                # there is a special case here: when the given context path refers to a file
+                # named 'talon.py', as in 'knausj_talon/lang/talon/talon.py'.
+
+                talon_file_path = parent_path.with_suffix('.talon')
+                python_file_path = sub_path.with_suffix('.py')
+                # logging.debug(f'get_source_file_paths: {talon_file_path=}, {python_file_path=}')
+
+                if parent_path.is_dir() and python_file_path.exists():
+                    user_paths.append(str(python_file_path))
+
+                if talon_file_path.exists():
+                    user_paths.append(str(talon_file_path))
+
+            else:
+                python_file_path = sub_path.with_suffix('.py')
+                user_paths.append(str(python_file_path))
+
+            logging.debug(f'get_source_file_paths: {user_paths}')
+            
+            return user_paths
+            
+    def is_talon_file_context(self, context_path) -> bool:
+        paths = self.get_source_file_paths(context_path)
+        if len(paths) > 1:
+            # not ready right now to figure out what the right action is for this case, punt for now.
+            raise Exception('is_talon_file_context: cannot resolve ambiguous context path - {context_path}')
+        return paths[0].endswith('.talon')
+
     def get_personalizations(self, context_path: str) -> Dict:
         """Return personalizations for given context path"""
         if not context_path in self._personalizations:
-            if context_path.endswith('.talon'):
+            if self.is_talon_file_context(context_path):
                 self._personalizations[context_path] = self.PersonalCommandContext(context_path, self, self.settings_map)
             else:
                 self._personalizations[context_path] = self.PersonalListContext(context_path, self, self.settings_map)
@@ -1119,23 +1184,26 @@ class Personalizer():
         context_personalizations = self.get_personalizations(ctx_path)
         return context_personalizations.commands
 
-    def get_personalized_filepath(self, context_path: str) -> str:
+    def get_personal_file_path(self, context_path: str) -> str:
         """Return the personalized file path for the given context"""
         personal_context = self.get_personalizations(context_path)
-        path_prefix, filename = personal_context._split_context_to_user_path_and_file_name()
-        path = self.personal_folder_path / path_prefix
-        if not os.path.exists(path):
-            os.makedirs(path, mode=550, exist_ok=True)
-            
-        filepath_prefix = path / filename
+        source_path = personal_context.get_source_file_path()
+        rel_path = Path(source_path).relative_to(os.path.realpath(actions.path.talon_user()))
+        path = self.personal_folder_path / rel_path
 
-        # use str, not Path
-        return str(filepath_prefix)
+        if self.testing:
+            logging.debug(f'get_personal_file_path: {context_path=}, {source_path=}, {rel_path=} {path=}')
+
+        dir_path = Path(path).parents[0]
+        if not os.path.exists(dir_path):
+            os.makedirs(dir_path, mode=550, exist_ok=True)
+            
+        return str(path)
 
     def _watch_source_file_for_context(self, ctx_path: str, method_ref: Callable) -> None:
         """Internal method to watch the file associated with a given context."""
         personal_context = self.get_personalizations(ctx_path)
-        watch_path = personal_context._get_fs_path_for_context()
+        watch_path = personal_context.get_source_file_path()
         self._watch(watch_path, method_ref)
         
     def _watch(self, path_in: str, method_ref: Callable) -> None:
@@ -1262,9 +1330,9 @@ class Personalizer():
             else:
                 raise Exception(f'_update_config: unrecognized file: {path}')
 
-            if self.testing:
-                logging.debug(f'_update_config: AFTER UPDATE: {updated_contexts=}')
-                logging.debug(f'_update_config: AFTER UPDATE: {self._updated_paths[path]=}')
+            # if self.testing:
+            #     logging.debug(f'_update_config: AFTER UPDATE: {updated_contexts=}')
+            #     # logging.debug(f'_update_config: AFTER UPDATE: {self._updated_paths[path]=}')
                 
             self.generate_files(target_contexts=[*updated_contexts])
         else:
@@ -1331,7 +1399,7 @@ class Personalizer():
                             
                 # WIP - anywhere this check appears is an opportunity to push code down into
                 # PersonalListContext and PersonalCommandContext
-                if ctx_path.endswith('.talon'):
+                if self.is_talon_file_context(ctx_path):
                     self.load_command_personalizations(target_contexts = [ctx_path])
                 else:
                     self.load_list_personalizations(target_contexts = [ctx_path])
@@ -1372,7 +1440,7 @@ class Personalizer():
         # this will need to change if we ever want to override any context not under 'user.'.
         return 'user.' + ctx_path
 
-    def _get_personalization_context_path_prefix(self):
+    def _get_personalization_context_path_prefix(self) -> str:
         top_level_relative = os.path.relpath(self.personalization_root_folder_path, actions.path.talon_user())
         ctx_path = 'user.' + top_level_relative.replace(os.path.sep, '.')
         # if self.testing:
@@ -1387,7 +1455,7 @@ class Personalizer():
         """Checks whether given path is under the command personalization config folder."""
         return self._is_config_file(path, self.personal_command_folder_name)
     
-    def _is_config_file(self, path: str, category: str):
+    def _is_config_file(self, path: str, category: str) -> bool:
         """Checks whether given path is under the indicated personalization config folder."""
         # logging.debug(f'_is_config_file: starting - {path, category}')
 
