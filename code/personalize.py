@@ -169,6 +169,14 @@ class PersonalizationActions:
         "Regenerate personalized contexts from source files."
         personalizer.unload_personalizations()
         personalizer.load_personalizations()
+
+def makedirs(path: str, mode: int, exist_ok: bool) -> None:
+    # https://stackoverflow.com/questions/5231901/permission-problems-when-creating-a-dir-with-os-makedirs-in-python
+    try:
+        original_umask = os.umask(0)
+        os.makedirs(path, mode=mode, exist_ok=exist_ok)
+    finally:
+        os.umask(original_umask)
         
 class Personalizer():
     """Generate personalized Talon contexts from source and configuration files."""
@@ -382,7 +390,7 @@ class Personalizer():
                     
                 self._write_talon_tag_calls(f)
                     
-                # logging.debug(f'write: {command_personalizations=}')
+                # logging.debug(f'write: {write=}')
                 for personal_command, personal_impl in self.commands.items():
                     print(f'{personal_command}:', file=f)
                     for line in personal_impl.split('\n'):
@@ -478,7 +486,7 @@ class Personalizer():
         # where config files are stored
         self.personal_config_folder_name = 'config'
         self.personal_config_folder = self.personalization_root_folder_path / self.personal_config_folder_name
-        os.makedirs(self.personal_config_folder, mode=550, exist_ok=True)
+        makedirs(self.personal_config_folder, mode=0o755, exist_ok=True)
 
         # we monitor this folder if the config directory ever disappears, looking for a reappearance
         self.personal_config_folder_parent = self.personal_config_folder.parents[0]
@@ -487,13 +495,13 @@ class Personalizer():
         self.personal_list_folder_name = 'list_personalization'
         self.personal_list_control_file_subpath = os.path.join(self.personal_list_folder_name, self.control_file_name)
         self.personal_list_control_file_path = os.path.join(self.personal_config_folder, self.personal_list_folder_name)
-        os.makedirs(self.personal_list_control_file_path, mode=550, exist_ok=True)
+        makedirs(self.personal_list_control_file_path, mode=0o755, exist_ok=True)
 
         # config sub folder for command personalizations
         self.personal_command_folder_name = 'command_personalization'
         self.personal_command_control_file_subpath = os.path.join(self.personal_command_folder_name, self.control_file_name)
         self.personal_command_control_file_path = os.path.join(self.personal_config_folder, self.personal_command_folder_name)
-        os.makedirs(self.personal_command_control_file_path, mode=550, exist_ok=True)
+        makedirs(self.personal_command_control_file_path, mode=0o755, exist_ok=True)
         
         # header written to personalized context files
         self.personalized_header = r"""
@@ -614,7 +622,7 @@ class Personalizer():
 
     def load_list_personalizations(self, target_contexts: List[str] = [], target_config_paths: List[str] = [], updated_contexts: List[str] = None) -> None:
         """Load some (or all) defined list personalizations."""
-        
+
         if target_contexts and target_config_paths:
             raise ValueError('load_list_personalizations: bad arguments - cannot accept both "target_contexts" and "target_config_paths" at the same time.')
             
@@ -1126,14 +1134,12 @@ class Personalizer():
             
             if not context_path.startswith('user.'):
                 raise ValueError('get_source_file_paths: can only handle user-defined contexts (context_path)')
-                
-            # if self.testing:
-            #    logging.debug(f'get_source_file_paths: {ctx_path=}')
 
             sub_path = Path(re.sub(r'^user\.', '', context_path).replace('.', os.path.sep))
             parent_path = actions.path.talon_user() / sub_path.parents[0]
             
-            logging.debug(f'get_source_file_paths: {context_path=}, {sub_path=}, {parent_path=}')
+            if self.testing:
+                logging.debug(f'get_source_file_paths: {context_path=}, {sub_path=}, {parent_path=}')
             
             user_paths = []
             if context_path.endswith('.talon'):
@@ -1154,7 +1160,8 @@ class Personalizer():
                 python_file_path = sub_path.with_suffix('.py')
                 user_paths.append(str(python_file_path))
 
-            logging.debug(f'get_source_file_paths: {user_paths}')
+            if self.testing:
+                logging.debug(f'get_source_file_paths: {user_paths}')
             
             return user_paths
             
@@ -1196,7 +1203,7 @@ class Personalizer():
 
         dir_path = Path(path).parents[0]
         if not os.path.exists(dir_path):
-            os.makedirs(dir_path, mode=550, exist_ok=True)
+            makedirs(dir_path, mode=0o755, exist_ok=True)
             
         return str(path)
 
@@ -1292,7 +1299,7 @@ class Personalizer():
             return
             
         if self.testing:
-            logging.debug(f'_update_config: STARTING - {path, flags}')
+            logging.debug(f'_update_config: starting - {path, flags}')
 
         modified = self._is_modified(path)
         # WIP - uncomment to reload as many times as Talon tells us to, regardless of whether
