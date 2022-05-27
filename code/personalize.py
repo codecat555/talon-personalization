@@ -37,6 +37,9 @@
 # Issues
 #
 # 1. STALE DATA
+#
+# UPDATE - looks like this may be a problem only on windows. at least, it seems to be working
+# on linux. haven't tested mac.
 # 
 # When a source file (as opposed to a config file) is updated, Talon calls the registered
 # callback - _update_personalizations(). That callback unloads the context and then reloads
@@ -579,7 +582,8 @@ class Personalizer():
 
                 caller.__setattr__(local_name, talon_setting.get())
 
-            logging.info(f'{caller_id}._update_all_settings: received updated value for {talon_setting.path}: {getattr(caller, local_name, None)}')
+            if caller.testing:
+                logging.debug(f'{caller_id}._update_all_settings: received updated value for {talon_setting.path}: {getattr(caller, local_name, None)}')
 
     @classmethod
     def _update_setting(cls, caller, caller_id: str, args):
@@ -597,7 +601,8 @@ class Personalizer():
         #     if caller.testing:
         #         logging.debug(f'{caller_id}._update_setting: {caller=}, {talon_name=}, {local_name=}, {type(local_name)=}')
 
-        logging.info(f'{caller_id}._update_setting: received updated value for {talon_name}: {getattr(caller, local_name, None)}')
+        if caller.testing:
+            logging.debug(f'{caller_id}._update_setting: received updated value for {talon_name}: {getattr(caller, local_name, None)}')
 
     def startup(self) -> None:
         """Load/unload personalizations, based on whether the feature is enabled or not."""
