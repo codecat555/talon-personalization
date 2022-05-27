@@ -1,0 +1,3 @@
+word <user.word>,term <user.word>
+phrase <user.text>$,turtle <user.text>$
+phrase <user.text> over,turtle <user.text> over
