@@ -1,0 +1,9 @@
+DELETE,knausj_talon.misc.formatters.talon,formatters_deletions.csv
+DELETE,knausj_talon.misc.formatters.talon,formatters_deletions1.csv
+REPLACE,knausj_talon.misc.formatters.talon,formatters_replacements.csv
+REPLACE,knausj_talon.misc.formatters.talon,formatters_replacements1.csv
+ADD,knausj_talon.misc.formatters.talon,formatters_additions.csv
+ADD,knausj_talon.misc.formatters.talon,formatters_additions1.csv
+DELETE,knausj_talon.text.line_commands.talon,line_commands_deletions.csv
+REPLACE,knausj_talon.text.line_commands.talon,line_commands_replacements.csv
+ADD,knausj_talon.text.line_commands.talon,line_commands_additions.csv

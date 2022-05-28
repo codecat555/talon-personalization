@@ -1,2 +1,0 @@
-DELETE,knausj_talon\misc\testfile.talon,testfile_deletions.csv
-REPLACE,knausj_talon\misc\testfile.talon,testfile_replacements.csv

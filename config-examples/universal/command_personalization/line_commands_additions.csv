@@ -1,0 +1,2 @@
+comment [line] <number>,remark [line] <number>
+comment <number> until <number>,remark <number> until <number>
