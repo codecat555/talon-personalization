@@ -625,6 +625,38 @@ class Personalizer():
             # logging.debug(f'load_personalizations: HERE I AM - {self.personal_config_folder=}')
             self._watch(self.personal_config_folder, self._update_config)
 
+    def _validate_source_file_path(self, source_file_path_in: str) -> Tuple[str, str]:
+        """Validate given file path, which is assumed to have been read from a control file
+        and which may require some transformation."""
+
+        context_path = None
+        source_file_path = None
+        if os.path.sep in source_file_path_in:
+            # seems to be a 'normal' filepath
+            source_file_path = os.path.sep.join([actions.path.talon_user(), source_file_path_in])
+            context_path = self._get_context_from_path(source_file_path)
+        else:
+            # could be a 'normal' file in the top level of the user directory, let's see...
+            source_file_path = os.path.sep.join([actions.path.talon_user(), source_file_path_in])
+            if not os.path.exists(source_file_path):
+                # not a top level file, maybe it's a 'universal', i.e. context, path..
+                context_path = source_file_path_in
+                if not context_path.startswith('user.'):
+                    context_path = 'user.' + context_path
+
+                paths = self.get_source_file_paths(context_path)
+                if len(paths) == 0:
+                    raise ValueError(f'file corresponding to given path not found: {source_file_path_in}')
+                elif len(paths) > 1:
+                    # not ready right now to figure out what the right action is for this case, punt for now.
+                    raise ValueError(f'given context path yields ambiguous file paths: {source_file_path_in} => {paths}')
+                source_file_path = paths[0]
+
+        if Path(source_file_path).is_relative_to(self.personal_folder_path):
+            raise ValueError('cannot personalize personalized files')
+
+        return source_file_path, context_path 
+        
     def load_list_personalizations(self, target_contexts: List[str] = [], target_config_paths: List[str] = [], updated_contexts: List[str] = None) -> None:
         """Load some (or all) defined list personalizations."""
 
@@ -666,25 +698,25 @@ class Personalizer():
                 if self.testing:
                     logging.debug(f'load_list_personalizations: read line {line_number}: {action=}, {source_file_path=}, {target_list_name=}, {remainder}')
 
-                if Path(source_file_path).is_relative_to(self.personal_folder_path):
-                    logging.error(f'load_list_personalizations: cannot personalize personalized files, skipping: "{source_file_path}"')
+                try:
+                    source_file_path, target_ctx_path = self._validate_source_file_path(source_file_path)
+                except ValueError as e:
+                    logging.error(f'load_list_personalizations: {control_file}, SKIPPING at line {line_number} - {str(e)}')
                     continue
-
-                target_ctx_path = self._get_context_from_path(source_file_path)
 
                 # handle mapping of 'self' to 'user' 
                 target_list_name = re.sub(r"^self\.", "user.", target_list_name)
 
                 # determine the CSV file path, check error cases and establish config file watches
-                config_file_path = None
+                auxiliary_file_path = None
                 if len(remainder):
                     # use str, not Path
-                    nominal_config_file_path = str(self.personal_config_folder / self.personal_list_folder_name / remainder[0])
-                    config_file_path = os.path.realpath(nominal_config_file_path)
-                    if os.path.exists(config_file_path):
-                        self._watch(config_file_path, self._update_config)
+                    nominal_auxiliary_file_path = str(self.personal_config_folder / self.personal_list_folder_name / remainder[0])
+                    auxiliary_file_path = os.path.realpath(nominal_auxiliary_file_path)
+                    if os.path.exists(auxiliary_file_path):
+                        self._watch(auxiliary_file_path, self._update_config)
                     else:
-                        logging.error(f'load_list_personalizations: file not found for {action.upper()} entry, skipping: "{config_file_path}"')
+                        logging.error(f'load_list_personalizations: file not found for {action.upper()} entry, skipping: "{auxiliary_file_path}"')
                         continue
                 elif action.upper() != 'REPLACE':
                     logging.error(f'load_list_personalizations: missing file name for {action.upper()} entry, skipping: "{target_list_name}"')
@@ -705,15 +737,15 @@ class Personalizer():
                 if target_config_paths:
                     # we are loading some, not all, paths. see if the current path matches our list.
                     # note: this does the right thing even when real_config_file_path is None, which is sometimes the case.
-                    if config_file_path in target_config_paths:
+                    if auxiliary_file_path in target_config_paths:
                         #if self.testing:
                         #    logging.debug(f'load_list_personalizations: loading {real_config_file_path}, because it is in given list of target config paths"')
                         
                         # consume the list as we go so at the end we know if we missed any paths
-                        target_config_paths.remove(config_file_path)
+                        target_config_paths.remove(auxiliary_file_path)
                     else:
                         if self.testing:
-                            logging.debug(f'load_list_personalizations: {control_file}, SKIPPING at line {line_number} - {config_file_path} is NOT in given list of target config paths.')
+                            logging.debug(f'load_list_personalizations: {control_file}, SKIPPING at line {line_number} - {auxiliary_file_path} is NOT in given list of target config paths.')
                         continue
 
                 if not target_ctx_path in registry.contexts:
@@ -722,7 +754,7 @@ class Personalizer():
                 
                 # load the target context
                 try:
-                    self.load_one_list_context(action, target_ctx_path, target_list_name, config_file_path)
+                    self.load_one_list_context(action, target_ctx_path, target_list_name, auxiliary_file_path)
                 except FilenameError as e:
                     logging.error(f'load_list_personalizations: {control_file}, SKIPPING at line {line_number} - {str(e)}')
                     continue
@@ -859,20 +891,20 @@ class Personalizer():
                 if self.testing:
                     logging.debug(f'load_command_personalizations: read line {line_number}: {action=}, {source_file_path=}, {config_file_name=}')
 
-                if Path(source_file_path).is_relative_to(self.personal_folder_path):
-                    logging.error(f'load_command_personalizations: cannot personalize personalized files, skipping: "{source_file_path}"')
+                try:
+                    source_file_path, target_ctx_path = self._validate_source_file_path(source_file_path)
+                except ValueError as e:
+                    logging.error(f'load_command_personalizations: {control_file}, SKIPPING at line {line_number} - {str(e)}')
                     continue
-                
-                target_ctx_path = self._get_context_from_path(source_file_path)
 
                 # determine the CSV file path, check error cases and establish config file watches
                 # use str, not Path
-                nominal_config_file_path = str(self.personal_config_folder / self.personal_command_folder_name / config_file_name)
-                config_file_path = os.path.realpath(nominal_config_file_path)
-                if os.path.exists(config_file_path):
-                    self._watch(config_file_path, self._update_config)
+                nominal_auxiliary_file_path = str(self.personal_config_folder / self.personal_command_folder_name / config_file_name)
+                auxiliary_file_path = os.path.realpath(nominal_auxiliary_file_path)
+                if os.path.exists(auxiliary_file_path):
+                    self._watch(auxiliary_file_path, self._update_config)
                 else:
-                    logging.error(f'load_command_personalizations: {nominal_control_file}, at line {line_number} - file not found for {action.upper()} entry, skipping: "{config_file_path}"')
+                    logging.error(f'load_command_personalizations: {nominal_control_file}, at line {line_number} - file not found for {action.upper()} entry, skipping: "{auxiliary_file_path}"')
                     continue
                 
                 if self.testing:
@@ -885,12 +917,12 @@ class Personalizer():
                     continue
 
                 if target_config_paths:
-                    if config_file_path in target_config_paths:
+                    if auxiliary_file_path in target_config_paths:
                         # consume the list as we go so at the end we know if we missed any paths
-                        target_config_paths.remove(config_file_path)
+                        target_config_paths.remove(auxiliary_file_path)
                     else:
                         if self.testing:
-                            logging.debug(f'load_command_personalizations: {nominal_control_file}, SKIPPING at line {line_number} - {config_file_path} is NOT in given list of target config paths')
+                            logging.debug(f'load_command_personalizations: {nominal_control_file}, SKIPPING at line {line_number} - {auxiliary_file_path} is NOT in given list of target config paths')
                         continue
 
                 if not target_ctx_path in registry.contexts:
@@ -899,7 +931,7 @@ class Personalizer():
 
                 value = None
                 try:
-                    value = self.load_one_command_context(action, target_ctx_path, config_file_path)
+                    value = self.load_one_command_context(action, target_ctx_path, auxiliary_file_path)
                 except LoadError as e:
                     logging.error(f'load_command_personalizations: {nominal_control_file}, at line {line_number} - {str(e)}')
                     continue
@@ -1138,7 +1170,7 @@ class Personalizer():
             """Function for extracting filesystem path information from the context path string."""
             
             if not context_path.startswith('user.'):
-                raise ValueError('get_source_file_paths: can only handle user-defined contexts (context_path)')
+                raise ValueError(f'get_source_file_paths: can only handle user-defined contexts ({context_path})')
 
             sub_path = Path(re.sub(r'^user\.', '', context_path).replace('.', os.path.sep))
             parent_path = actions.path.talon_user() / sub_path.parents[0]
@@ -1152,7 +1184,8 @@ class Personalizer():
                 # named 'talon.py', as in 'knausj_talon/lang/talon/talon.py'.
 
                 talon_file_path = parent_path.with_suffix('.talon')
-                python_file_path = sub_path.with_suffix('.py')
+                # python_file_path = sub_path.with_suffix('.py')
+                python_file_path = actions.path.talon_user() / sub_path.with_suffix('.py')
                 # logging.debug(f'get_source_file_paths: {talon_file_path=}, {python_file_path=}')
 
                 if parent_path.is_dir() and python_file_path.exists():
@@ -1162,8 +1195,9 @@ class Personalizer():
                     user_paths.append(str(talon_file_path))
 
             else:
-                python_file_path = sub_path.with_suffix('.py')
-                user_paths.append(str(python_file_path))
+                python_file_path = actions.path.talon_user() / sub_path.with_suffix('.py')
+                if python_file_path.exists():
+                    user_paths.append(str(python_file_path))
 
             if self.testing:
                 logging.debug(f'get_source_file_paths: {user_paths}')
@@ -1435,7 +1469,7 @@ class Personalizer():
         path = Path(path_in)
         if path.is_absolute():
             if not path.is_relative_to(actions.path.talon_user()):
-                raise Exception(f'oh no')
+                raise ValueError(f'_get_context_from_path: given path is not relative to Talon user folder: {path_in}')
         else:
             # assume path is relative to talon user folder
             path = actions.path.talon_user() / path
