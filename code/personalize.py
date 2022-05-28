@@ -1111,6 +1111,9 @@ class Personalizer():
 
                     self._personalizations = {}
 
+                    if monitor_registry_for_updates:
+                        registry.unregister("", personalizer._update_context)
+                    
                     if monitor_filesystem_for_updates:
                         self._unwatch_all(self._update_personalizations)
 
