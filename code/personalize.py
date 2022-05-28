@@ -1178,8 +1178,8 @@ class Personalizer():
             sub_path = Path(re.sub(r'^user\.', '', context_path).replace('.', os.path.sep))
             parent_path = actions.path.talon_user() / sub_path.parents[0]
             
-            if self.testing:
-                logging.debug(f'get_source_file_paths: {context_path=}, {sub_path=}, {parent_path=}')
+            # if self.testing:
+            #     logging.debug(f'get_source_file_paths: {context_path=}, {sub_path=}, {parent_path=}')
             
             user_paths = []
             if context_path.endswith('.talon'):
@@ -1202,8 +1202,8 @@ class Personalizer():
                 if python_file_path.exists():
                     user_paths.append(str(python_file_path))
 
-            if self.testing:
-                logging.debug(f'get_source_file_paths: {user_paths}')
+            # if self.testing:
+            #     logging.debug(f'get_source_file_paths: {user_paths}')
             
             return user_paths
             
