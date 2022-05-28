@@ -1,46 +1,12 @@
 # This module provides a mechanism for overriding talon lists and commands via a set of csv files.
-# 
-# CONTROL FILE
-# ------------
-# There is a master csv file called 'control.csv' which indicates how the other files should
-# be used. It's format is:
-#
-#        action,talon list name,CSV file name
-#
-# The first field, action, may be ADD, DELETE, or REPLACE.
-#
-#     ADD - the CSV file entries should be added to the indicated list.
-#  DELETE - the CSV file entries should be deleted from the indicated list.
-# REPLACE - the indicated list should be completely replaced by the CSV file entries,
-#           or by nothing if no CSV file is given.
-#
-# Note: the CSV file name field is optional for the REPLACE action, in which case the
-# indicated list will simply be replaced with nothing.
-#
-#
-# CSV FILE FORMAT - GENERAL
-# -------------------------
-# Nothing fancy, just basic comma-separated values. Commas in the data can be escaped
-# using a backslash prefix.
-#
-#
-# CSV FILE FORMAT - FOR DELETE ACTION
-# -----------------------------------
-# One item per line, indicating which keys should be removed from the given list.
-#
-#
-# CSV FILE FORMAT - FOR ADD/REPLACE ACTIONS
-# -----------------------------------------
-# Two items per line, separated by a single comma. The first value is the key, and the
-# second the value.
 
 # Issues
 #
 # 1. STALE DATA
 #
-# UPDATE - looks like this may be a problem only on windows. at least, it seems to be working
-# on linux. haven't tested mac.
-# 
+# UPDATE - looks like this may be a problem only on windows. at least, add_context and remove_context
+# seem to be working on linux. haven't tested mac.
+#
 # When a source file (as opposed to a config file) is updated, Talon calls the registered
 # callback - _update_personalizations(). That callback unloads the context and then reloads
 # the data from the registry (e.g. in load_one_command_context()).
@@ -95,6 +61,89 @@
 # Hmmm, looks like the registry provides 'add_context' and 'remove_context' events, maybe those
 # will work...Nope, those events also arrive before the registry has been updated.
 #
+# 2. FileNotFoundError occurs on Linux when personalized files are deleted because personalizations have been disabled by
+# a settings change.
+# 
+# The odd thing is that when personalizations are enabled via at settings change, the talon log does not show any 'DEBUG [+]'
+# lines for the newly-created personalized files. Then, when the personalizations feature is disabled via a settings change,
+# the personalized files are deleted AND THEN those 'DEBUG [+]' lines do appear in the log - just before the errors complain
+# that they do not exist. After that, 'DEBUG [-]' log lines appear for those just-deleted files.
+#
+# For example, here are some log lines showing this happening for the line-commands.talon file. Generated this by staring talon
+# fresh with personalization disabled. Also, both monitoring options were disabled. Then, I enabled personalizations and verifying that the personalized files were generated
+# properly, then disabled personalizations -
+#
+# 2022-05-27 20:39:24 DEBUG [~] /home/me/.talon/user/talon-personalization/settings.talon
+# 2022-05-27 20:39:24 DEBUG Personalizer._update_setting: received updated value for user.enable_personalization: 1
+# 2022-05-27 20:40:16 DEBUG [~] /home/me/.talon/user/talon-personalization/settings.talon
+#
+# At this point, I checked for the newly-generated files (note line_commands.talon):
+#
+# me@nimbus:~/.talon/user/talon-personalization$ ls -ltrR _personalizations/
+# _personalizations/:
+# total 4
+# drwxrwxrwx 5 me me 4096 May 27 20:39 knausj_talon/
+
+# _personalizations/knausj_talon:
+# total 12
+# drwxr-xr-x 2 me me 4096 May 27 20:39 text/
+# drwxr-xr-x 2 me me 4096 May 27 20:39 misc/
+# drwxr-xr-x 2 me me 4096 May 27 20:39 code/
+
+# _personalizations/knausj_talon/text:
+# total 8
+# -rw-rw-r-- 1 me me  629 May 27 20:39 text_navigation.py
+# -rw-rw-r-- 1 me me 2986 May 27 20:39 line_commands.talon
+
+# _personalizations/knausj_talon/misc:
+# total 4
+# -rw-rw-r-- 1 me me 1765 May 27 20:39 formatters.talon
+
+# _personalizations/knausj_talon/code:
+# total 8
+# -rw-rw-r-- 1 me me 1251 May 27 20:39 window_snap.py
+# -rw-rw-r-- 1 me me 3670 May 27 20:39 keys.py
+# me@nimbus:~/.talon/user/talon-personalization$ date
+# Fri May 27 08:39:59 PM PDT 2022
+#
+# Now, disabled personalizations again -
+#
+# 2022-05-27 20:40:16 DEBUG Personalizer._update_setting: received updated value for user.enable_personalization: 0
+# 2022-05-27 20:40:16 DEBUG [+] /home/me/.talon/user/talon-personalization/_personalizations/knausj_talon/code/keys.py
+# 2022-05-27 20:40:16 ERROR user.talon-personalization._personalizations.knausj_talon.code.keys (/home/me/.talon/user/talon-personalization/_personalizations/knausj_talon/code/keys.py) import failed
+#    13:          lib/python3.9/threading.py:930* # cron thread
+#    12:          lib/python3.9/threading.py:973*
+#    11:          lib/python3.9/threading.py:910*
+#    10:                       talon/cron.py:155|
+#     9:                       talon/cron.py:106|
+#     8:                         talon/fs.py:64 |
+#     7:                         talon/fs.py:57 |
+#     6:             talon/scripting/rctx.py:233| # 'fs' main:on_change()
+#     5:             app/resources/loader.py:789|
+#     4:             app/resources/loader.py:731|
+#     3:             app/resources/loader.py:427| # [stack splice]
+#     2: lib/python3.9/importlib/__init__.py:127|
+#     1:                importlib._bootstrap:984|
+# ModuleNotFoundError: No module named 'user.talon-personalization._personalizations'
+# 2022-05-27 20:40:16 DEBUG [+] /home/me/.talon/user/talon-personalization/_personalizations/knausj_talon/text/line_commands.talon
+# 2022-05-27 20:40:16 ERROR Failed to load: /home/me/.talon/user/talon-personalization/_personalizations/knausj_talon/text/line_commands.talon
+#    12: lib/python3.9/threading.py:930* # cron thread
+#    11: lib/python3.9/threading.py:973*
+#    10: lib/python3.9/threading.py:910*
+#     9:              talon/cron.py:155|
+#     8:              talon/cron.py:106|
+#     7:                talon/fs.py:64 |
+#     6:                talon/fs.py:57 |
+#     5:    talon/scripting/rctx.py:233| # 'fs' main:on_change()
+#     4:    app/resources/loader.py:789|
+#     3:    app/resources/loader.py:731|
+#     2:    app/resources/loader.py:488| # [stack splice]
+#     1:    app/resources/loader.py:528|
+# FileNotFoundError: [Errno 2] No such file or directory: '/home/me/.talon/user/talon-personalization/_personalizations/knausj_talon/text/line_commands.talon'
+# ...
+# 2022-05-27 20:40:16 DEBUG [-] /home/me/.talon/user/talon-personalization/_personalizations/knausj_talon/text/line_commands.talon
+#
+
 
 # Note: there can be a problem redefining things that have not yet been defined. this can
 # happen if the personalized context gets loaded before the source context (is this documented
@@ -238,7 +287,6 @@ class Personalizer():
             #    logging.debug(f'_personalize_match_string: {old_match_string=}, {new_match_string=}')
 
             return new_match_string
-            
             
     class PersonalListContext(PersonalContext):
         """A personalized Talon list context."""
@@ -542,9 +590,18 @@ class Personalizer():
         self._enabled = value
 
         if self._enabled:
-            # personalizations have been enabled, load them in
+            # personalizations have been enabled, load them
             self.load_personalizations()
+
+            # after we have loaded at least once, begin monitoring the config folder for changes. this
+            # covers the case where no control files exist at startup but then are added later.
+            # NOTE: this is done unconditionally - we always monitor for config file changes when the feature
+            # is enabled, regardless of the 'monitor_filesystem_for_updates' value.
+            self._watch(self.personal_config_folder, self._update_config)
         else:
+            # stop monitoring for config file changes
+            self._unwatch(self.personal_config_folder, self._update_config)
+
             # personalizations have been disabled, unload them
             self.unload_personalizations()
 
@@ -620,10 +677,9 @@ class Personalizer():
             self.load_command_personalizations()
             self.generate_files()
 
-            # after we have loaded at least once, begin monitoring the config folder for changes. this
-            # covers the case where no control files exist at startup but then are added later.
-            # logging.debug(f'load_personalizations: HERE I AM - {self.personal_config_folder=}')
-            self._watch(self.personal_config_folder, self._update_config)
+            if self._personalizations:
+                if monitor_registry_for_updates:
+                    registry.register("", self._update_context)                
 
     def _validate_source_file_path(self, source_file_path_in: str) -> Tuple[str, str]:
         """Validate given file path, which is assumed to have been read from a control file
@@ -681,14 +737,6 @@ class Personalizer():
             # if we're reloading the control file, then we're doing everything anyways
             target_config_paths = None
 
-        # unwatch all config files until found again in the loop below
-        watched_paths = self._get_watched_paths_for_method(self._update_config)
-        for path in watched_paths:
-            if self._is_list_config_file(path):
-                self._unwatch(path, self._update_config)
-
-        self._watch(control_file, self._update_config)
-            
         try:
             # loop through the control file and do the needful
             line_number = 0
@@ -713,9 +761,7 @@ class Personalizer():
                     # use str, not Path
                     nominal_auxiliary_file_path = str(self.personal_config_folder / self.personal_list_folder_name / remainder[0])
                     auxiliary_file_path = os.path.realpath(nominal_auxiliary_file_path)
-                    if os.path.exists(auxiliary_file_path):
-                        self._watch(auxiliary_file_path, self._update_config)
-                    else:
+                    if not os.path.exists(auxiliary_file_path):
                         logging.error(f'load_list_personalizations: file not found for {action.upper()} entry, skipping: "{auxiliary_file_path}"')
                         continue
                 elif action.upper() != 'REPLACE':
@@ -874,14 +920,6 @@ class Personalizer():
             # if we're reloading the control file, then we're doing everything anyways
             target_config_paths = None
             
-        # unwatch all config files until found again in the loop below
-        watched_paths = self._get_watched_paths_for_method(self._update_config)
-        for path in watched_paths:
-            if self._is_command_config_file(path):
-                self._unwatch(path, self._update_config)
-
-        self._watch(control_file, self._update_config)
-            
         try:
             # loop through the control file and do the needful
             line_number = 0
@@ -901,9 +939,7 @@ class Personalizer():
                 # use str, not Path
                 nominal_auxiliary_file_path = str(self.personal_config_folder / self.personal_command_folder_name / config_file_name)
                 auxiliary_file_path = os.path.realpath(nominal_auxiliary_file_path)
-                if os.path.exists(auxiliary_file_path):
-                    self._watch(auxiliary_file_path, self._update_config)
-                else:
+                if not os.path.exists(auxiliary_file_path):
                     logging.error(f'load_command_personalizations: {nominal_control_file}, at line {line_number} - file not found for {action.upper()} entry, skipping: "{auxiliary_file_path}"')
                     continue
                 
@@ -1111,16 +1147,16 @@ class Personalizer():
 
                     self._personalizations = {}
 
-                    if monitor_registry_for_updates:
-                        registry.unregister("", personalizer._update_context)
-                    
-                    if monitor_filesystem_for_updates:
-                        self._unwatch_all(self._update_personalizations)
-
                     self._purge_files()
 
             if not self._personalizations:
-                self._ctx.tags = []                
+                self._ctx.tags = []
+
+                if monitor_filesystem_for_updates:
+                    self._unwatch_all(self._update_personalizations)
+
+                if monitor_registry_for_updates:
+                    registry.unregister("", self._update_context)        
                 
     def unload_list_personalizations(self) -> None:
         if self.testing:
@@ -1335,10 +1371,6 @@ class Personalizer():
 
     def _update_config(self, path: str, flags: Any) -> None:
         """Callback method for updating personalized contexts after changes to personalization configuration files."""
-
-        if not self.enabled:
-            # do nothing until you hear from me
-            return
             
         if self.testing:
             logging.debug(f'_update_config: starting - {path, flags}')
@@ -1622,13 +1654,6 @@ def on_ready() -> None:
 
     personalizer.startup()
 
-    # catch updates
-    # settings.register("", personalizer._refresh_settings)
-    
-    if monitor_registry_for_updates:
-        registry.register("", personalizer._update_context)
-        # registry.register("update_decls", personalizer._update_decls)
-        
 personalizer = None
 
 app.register("ready", on_ready)
