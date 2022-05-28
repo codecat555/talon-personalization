@@ -4,9 +4,6 @@
 #
 # 1. STALE DATA
 #
-# UPDATE - looks like this may be a problem only on windows. at least, add_context and remove_context
-# seem to be working on linux. haven't tested mac.
-#
 # When a source file (as opposed to a config file) is updated, Talon calls the registered
 # callback - _update_personalizations(). That callback unloads the context and then reloads
 # the data from the registry (e.g. in load_one_command_context()).
@@ -61,94 +58,12 @@
 # Hmmm, looks like the registry provides 'add_context' and 'remove_context' events, maybe those
 # will work...Nope, those events also arrive before the registry has been updated.
 #
-# 2. FileNotFoundError occurs on Linux when personalized files are deleted because personalizations have been disabled by
-# a settings change.
-# 
-# The odd thing is that when personalizations are enabled via at settings change, the talon log does not show any 'DEBUG [+]'
-# lines for the newly-created personalized files. Then, when the personalizations feature is disabled via a settings change,
-# the personalized files are deleted AND THEN those 'DEBUG [+]' lines do appear in the log - just before the errors complain
-# that they do not exist. After that, 'DEBUG [-]' log lines appear for those just-deleted files.
-#
-# For example, here are some log lines showing this happening for the line-commands.talon file. Generated this by staring talon
-# fresh with personalization disabled. Also, both monitoring options were disabled. Then, I enabled personalizations and verifying that the personalized files were generated
-# properly, then disabled personalizations -
-#
-# 2022-05-27 20:39:24 DEBUG [~] /home/me/.talon/user/talon-personalization/settings.talon
-# 2022-05-27 20:39:24 DEBUG Personalizer._update_setting: received updated value for user.enable_personalization: 1
-# 2022-05-27 20:40:16 DEBUG [~] /home/me/.talon/user/talon-personalization/settings.talon
-#
-# At this point, I checked for the newly-generated files (note line_commands.talon):
-#
-# me@nimbus:~/.talon/user/talon-personalization$ ls -ltrR _personalizations/
-# _personalizations/:
-# total 4
-# drwxrwxrwx 5 me me 4096 May 27 20:39 knausj_talon/
-
-# _personalizations/knausj_talon:
-# total 12
-# drwxr-xr-x 2 me me 4096 May 27 20:39 text/
-# drwxr-xr-x 2 me me 4096 May 27 20:39 misc/
-# drwxr-xr-x 2 me me 4096 May 27 20:39 code/
-
-# _personalizations/knausj_talon/text:
-# total 8
-# -rw-rw-r-- 1 me me  629 May 27 20:39 text_navigation.py
-# -rw-rw-r-- 1 me me 2986 May 27 20:39 line_commands.talon
-
-# _personalizations/knausj_talon/misc:
-# total 4
-# -rw-rw-r-- 1 me me 1765 May 27 20:39 formatters.talon
-
-# _personalizations/knausj_talon/code:
-# total 8
-# -rw-rw-r-- 1 me me 1251 May 27 20:39 window_snap.py
-# -rw-rw-r-- 1 me me 3670 May 27 20:39 keys.py
-# me@nimbus:~/.talon/user/talon-personalization$ date
-# Fri May 27 08:39:59 PM PDT 2022
-#
-# Now, disabled personalizations again -
-#
-# 2022-05-27 20:40:16 DEBUG Personalizer._update_setting: received updated value for user.enable_personalization: 0
-# 2022-05-27 20:40:16 DEBUG [+] /home/me/.talon/user/talon-personalization/_personalizations/knausj_talon/code/keys.py
-# 2022-05-27 20:40:16 ERROR user.talon-personalization._personalizations.knausj_talon.code.keys (/home/me/.talon/user/talon-personalization/_personalizations/knausj_talon/code/keys.py) import failed
-#    13:          lib/python3.9/threading.py:930* # cron thread
-#    12:          lib/python3.9/threading.py:973*
-#    11:          lib/python3.9/threading.py:910*
-#    10:                       talon/cron.py:155|
-#     9:                       talon/cron.py:106|
-#     8:                         talon/fs.py:64 |
-#     7:                         talon/fs.py:57 |
-#     6:             talon/scripting/rctx.py:233| # 'fs' main:on_change()
-#     5:             app/resources/loader.py:789|
-#     4:             app/resources/loader.py:731|
-#     3:             app/resources/loader.py:427| # [stack splice]
-#     2: lib/python3.9/importlib/__init__.py:127|
-#     1:                importlib._bootstrap:984|
-# ModuleNotFoundError: No module named 'user.talon-personalization._personalizations'
-# 2022-05-27 20:40:16 DEBUG [+] /home/me/.talon/user/talon-personalization/_personalizations/knausj_talon/text/line_commands.talon
-# 2022-05-27 20:40:16 ERROR Failed to load: /home/me/.talon/user/talon-personalization/_personalizations/knausj_talon/text/line_commands.talon
-#    12: lib/python3.9/threading.py:930* # cron thread
-#    11: lib/python3.9/threading.py:973*
-#    10: lib/python3.9/threading.py:910*
-#     9:              talon/cron.py:155|
-#     8:              talon/cron.py:106|
-#     7:                talon/fs.py:64 |
-#     6:                talon/fs.py:57 |
-#     5:    talon/scripting/rctx.py:233| # 'fs' main:on_change()
-#     4:    app/resources/loader.py:789|
-#     3:    app/resources/loader.py:731|
-#     2:    app/resources/loader.py:488| # [stack splice]
-#     1:    app/resources/loader.py:528|
-# FileNotFoundError: [Errno 2] No such file or directory: '/home/me/.talon/user/talon-personalization/_personalizations/knausj_talon/text/line_commands.talon'
-# ...
-# 2022-05-27 20:40:16 DEBUG [-] /home/me/.talon/user/talon-personalization/_personalizations/knausj_talon/text/line_commands.talon
-#
-
 
 # Note: there can be a problem redefining things that have not yet been defined. this can
 # happen if the personalized context gets loaded before the source context (is this documented
 # on the basic customization wiki?). Not a problem with this module, since it waits for the ready
-# event and the generated personalizations are not enabled until this module switches the tag.
+# event and the generated personalizations are not enabled until this module switches the tag. it
+# seems to be a general talon problem...but, why doesn't it happen more often?
 
 # TODO - fix this:
 # 2022-05-21 14:01:39 DEBUG [~] C:\Users\me\AppData\Roaming\talon\user\personalization\settings.talon
