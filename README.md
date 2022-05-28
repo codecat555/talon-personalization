@@ -18,7 +18,7 @@ Every Talon user needs to customize their *commands*, to improve recognition acc
 
 Talon *Lists* are also important targets for customization, with the alphabet being the canonical example. The alphabet is commonly the first thing one learns when starting with Talon and, consequently, the first thing people want to personalize.
 
-However, Talon *lists* are defined in Python files and that makes them less accessible for many people. At a minimum, you need to know that [Talon lists](https://talonvoice.com/docs/index.html#talon.Context.lists) are not [Python lists](https://pythongeeks.org/python-lists/). Well, then can be (sort of), but they are actually [Python dicts (dictionaries)](https://talonvoice.com/docs/index.html#talon.Context.lists). There are other considerations when modifying Talon *lists* that are discussed in more detail below.
+However, Talon *lists* are defined in Python files and that makes them less accessible for many people. At a minimum, you need to understand that [Talon lists](https://talonvoice.com/docs/index.html#talon.Context.lists) are not [Python lists](https://pythongeeks.org/python-lists/). Well, then can be (sort of), but they are actually defined as [Python dicts (dictionaries)](https://talonvoice.com/docs/index.html#talon.Context.lists). There are other considerations when modifying Talon *lists* that are discussed in more detail below.
 
 Customizing other Talon objects, such as *actions* and *captures*, require an understanding of Python programming and a deeper knowledge of how Talon works. While those sorts of changes could conceivably be managed via configuration files such as those used by this module, I think in the end it would be overly complicated, would still require programming knowledge and wouldn't really make much sense.
 
@@ -29,21 +29,22 @@ There are a number of things you should be aware of before using this code:
 1. This module should be considered to be a *stopgap* measure. At some point in the (*possibly near*) future, Talon will have a new plugin architecture which will make this code obsolete.  
 On the plus side, however, having your customizations clearly defined in a set of simple configuration files should make it easy to migrate over to the new schema. If this approach becomes popular, there will certainly be programs available for automatically migrating your customizations when the time comes.
 
-1. As of this writing, this code works with current (beta) versions of Talon. However, it makes use of various Talon interfaces that may not be supported in future versions of Talon. I hope to keep it up to date and, if I don't, someone else can always fork my code and fix it themselves. Still, there is no guarantee this feature will continue to work properly as Talon evolves.
+1. As of this writing, this code works with current (beta) versions of Talon. However, it uses various Talon interfaces in ways that may not be supported in future versions of Talon. I hope to keep it up to date and, if I don't, someone else can always fork my code and fix it themselves. Still, there is no guarantee this feature will continue to work properly as Talon evolves.
 
 1. While this module makes some things simpler, it does require some study to get up and running (i.e. reading this page). Frankly, the Talon file syntax for defining *commands* is not that hard to learn. The same is essentially true for Talon *lists*, even though they are (currently) defined in Python code modules. You might want to skip this and just follow the customization guide mentioned above.  
 Or, you could use this module to generate the customizations you want and then turn it off so you can begin managing those files yourself (but see the [General Benefits](#General-Benefits) section first).
 
-1. This module allows you to change Talon lists in ways that could break the surrounding code. It's up to the user to ensure that the configured changes actually work in the broader context of things. The [Talon list report tool](https://github.com/codecat555/talon_list_report) might be helpful in resolving any questions around this point.
+1. This module allows you to change Talon lists in ways that could possibly break the surrounding code. It's up to the user to ensure that the configured changes actually work in the broader context of things. The [Talon list report tool](https://github.com/codecat555/talon_list_report) might be helpful in resolving any questions around how and where any particular list is used.
 
 1. Some Talon lists are composites of other lists and changes to one of the component lists may not be reflected in the composite.
-One example I know of is `user.symbol_key`, in `knausj_talon/code/keys.py`. The Python list that defines the Talon list named `user.punctuation` is also included in the Talon list named `user.symbol_key`. You can customize the former list, but those changes will not automatically be reflected in the latter list. The fix is simply to apply your overrides to both lists, which can be done with separate control file lines for each of the lists, both referencing the same auxilliary file. 
+One example I know of is `user.symbol_key`, in `knausj_talon/code/keys.py`. The Python list that defines the Talon list named `user.punctuation` is also included in the Talon list named `user.symbol_key`. You can customize the former list, but those changes will not automatically be reflected in the latter list. The fix is simply to apply your overrides to both lists, which can be done with separate [control file](#The-Control-File) lines for each of the lists, both referencing the same auxilliary file. 
 
-1. In general, when working with knausj_talon, if a list is populated by a configuration file, then it is better to use that mechanism for customization rather than this module.
+1. In general, when working with knausj_talon or other Talon community repositories, if a list is populated by a configuration file, then it might be better to use that local mechanism for customization rather than this module. However, there are tradeoffs
+to be considered.
 
 1. The personalizations generated by this module *do not currently update automatically as the source files change*. Talon does send events for such changes and this module includes working code to handle those events. The problem is that the events arrive *before* the source changes are actually available in the Talon registry. While this problem persists, you can [update your personalizations manually](#How-to-Refresh-Your-Personalizations-After-Source-File-Changes). 
 
-1. This is new code, there will be bugs. I've tested using the beta version of Talon running on Windows and on Linux, but I haven't covered all of the cases. Caveat emptor.
+1. This is new code, there will be bugs. I've tested using the beta version of Talon (v0.2.0-496-g1abe (496)) running on Windows and on Linux, but I haven't covered all of the cases.
 
 1. Currently, this module does not explicitly support the case where a Talon Python file defines more than one context. *I'd like to hear about any cases where someone couldn't override a list due to this limitation.*
 
@@ -98,6 +99,8 @@ On startup, this module expects to find a folder named `config` in the Talon use
 
 Under the `config` folder, the module creates two sub-folders, called `list_personalizations` and `command_personalizations` - these two folders are where you need to put your configuration files, depending on whether you want to customize *lists* or *commands* (or both).
 
+The `config-examples` folder in this repo contains three slightly different sets of example configuration files: one using linux file paths, one using windows file paths and a 'universal' set. The 'universal' set uses Talon 'context paths' rather than file paths, this allows the same config files to be used across all platforms but requires a bit more up-front effort on the part of the user.
+
 ### The Control File
 
 To get started, you will create a master configuration file - called `control.csv` - in the appropriate config folder.
@@ -127,7 +130,7 @@ The *first field*, `action`, may be `ADD`, `DELETE`, or `REPLACE`:
 The *second field* specifies the path of the file containing the list that you want to personalize. This can be a full path,
 or it can be relative to the Talon user folder.
 
-It can also be a talon `context path` - with or without the `user.` prefix. This option is convenient when you want to use the
+It can also be a talon 'context path' - with or without the 'user.' prefix. This option is convenient when you want to use the
 same control files on both windows and non-windows systems. See the provided `config-examples` folder for examples.
 
 The *third field* (the auxiliary file) for the `ADD` and `REPLACE` actions must contain two values (*source command* and *target command*) on each line.
@@ -156,7 +159,7 @@ And, the `source_replacements.csv` would look like this:
 thing one,thing two
 ```
 
-With this configuration, the module will create a new Talon context which will take precedence over the corresponding knausj_talon context as long as the personalization feature is enabled. This new context will ignore the `thing one` command, and will respond to `thing two` just as it would have originally responded to `thing one`.
+With this configuration, the module will create a new Talon context which will take precedence over the corresponding knausj_talon context as long as the personalization feature is enabled. This new context will cause the `thing one` command to be ignored, and will respond to `thing two` just as it would have originally responded to `thing one`.
 
 If you also wanted to replace the `lorax` command with `speak for trees`, the `source_replacements.csv` file would look like this:
 
@@ -216,7 +219,7 @@ The first field, `action`, may be `ADD`, `DELETE`, `REPLACE_KEY` or `REPLACE`:
 The *second field* specifies the path of the file containing the list that you want to personalize. This can be a full path,
 or it can be relative to the Talon user folder.
 
-It can also be a talon `context path` - with or without the `user.` prefix. This option is convenient when you want to use the
+It can also be a talon 'context path' - with or without the 'user.' prefix. This option is convenient when you want to use the
 same control files on both windows and non-windows systems. See the provided `config-examples` folder for examples.
 
 The *third field* specifies the name of the list you want to personalize.
@@ -244,6 +247,11 @@ or, for Windows users:
 
 ```
 REPLACE,knausj_talon\code\keys.py,user.letter,alphabet.csv
+```
+or, using 'universal' Talon context paths:
+
+```
+REPLACE,user.knausj_talon.code.keys,user.letter,alphabet.csv
 ```
 
 And, your `alphabet.csv` file would look something like this:
@@ -289,7 +297,7 @@ Or, suppose **the context header of a .talon file is updated in the source repo*
 
 Neither of these issues is a problem when using this module to manage your customizations. The personalized files are regenerated completely whenever the source files change, so any fixes present in the source file will be automatically incorporated into your personalized version.
 
-The context header is fetched from the source each time the personalized versions are generated. Then, the user.personalization tag is added. So, the resulting context match will *always* be more specific than the source version. And, consequently, your personalized context will always take precedence over the corresponding source context.
+The context header is fetched from the source each time the personalized versions are generated. Then, the `user.personalization` tag is added. So, the resulting context match will *always* be more specific than the source version. And, consequently, your personalized context will always take precedence over the corresponding source context.
 
 Now, if one of the source files you have personalized is renamed, or if some of that file's contents are moved to a different file, this *will* break those personalizations. The fix is simple - just update your control files to reflect the new source file path.
 
