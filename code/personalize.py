@@ -1138,7 +1138,6 @@ class Personalizer():
                 # named 'talon.py', as in 'knausj_talon/lang/talon/talon.py'.
 
                 talon_file_path = parent_path.with_suffix('.talon')
-                # python_file_path = sub_path.with_suffix('.py')
                 python_file_path = actions.path.talon_user() / sub_path.with_suffix('.py')
                 # logging.debug(f'get_source_file_paths: {talon_file_path=}, {python_file_path=}')
 
