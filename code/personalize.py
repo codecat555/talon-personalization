@@ -142,6 +142,8 @@ def makedirs(path: str, mode: int, exist_ok: bool) -> None:
     try:
         original_umask = os.umask(0)
         os.makedirs(path, mode=mode, exist_ok=exist_ok)
+    except FileExistsError:
+        pass
     finally:
         os.umask(original_umask)
         
